@@ -1,0 +1,147 @@
+services:
+  # ── Database ──────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cloudvm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cloudvm_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-cloudvm}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudvm"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  # ── NATS ──────────────────────────────────────────
+  nats:
+    image: nats:2-alpine
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--js"]
+
+  # ── API Gateway ──────────────────────────────────
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-3001}:3001"
+    environment:
+      - AUTH_SERVICE_URL=http://auth:3002
+      - USER_SERVICE_URL=http://user:3003
+      - VM_SERVICE_URL=http://vm:3004
+      - PAYMENT_SERVICE_URL=http://payment:3005
+      - JWT_SECRET=${JWT_SECRET}
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+      - auth
+      - user
+      - vm
+
+  # ── Auth Service ─────────────────────────────────
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${AUTH_PORT:-3002}:3002"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-15m}
+      - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── User Service ─────────────────────────────────
+  user:
+    build:
+      context: ./services/user
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${USER_PORT:-3003}:3003"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── VM Service ───────────────────────────────────
+  vm:
+    build:
+      context: ./services/vm
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${VM_PORT:-3004}:3004"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+      - JWT_SECRET=${JWT_SECRET}
+      - NATS_URL=nats://nats:4222
+      - REDIS_HOST=redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  # ── Python Worker ────────────────────────────────
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - NATS_URL=nats://nats:4222
+      - REDIS_HOST=redis
+      - ONE_XMLRPC=${ONE_XMLRPC}
+      - ONE_USERNAME=${ONE_USERNAME}
+      - ONE_PASSWORD=${ONE_PASSWORD}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+    depends_on:
+      nats:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  # ── Frontend ─────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:${GATEWAY_PORT:-3001}
+    depends_on:
+      - gateway
+
+volumes:
+  pgdata:
+  redisdata:
