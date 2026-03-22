@@ -229,6 +229,14 @@ export class VmService {
     return { message: `VM '${vm.name}' has been deleted` };
   }
 
+  async getTemplates(): Promise<Array<{ id: number; name: string }>> {
+    const result = await this.nats.request<Array<{ id: number; name: string }>>(
+      "templates.list",
+      {},
+    );
+    return result ?? [];
+  }
+
   async getStats(userId: string, role: string) {
     const where: Record<string, any> = role === "ADMIN" ? {} : { userId };
 

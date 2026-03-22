@@ -181,14 +181,31 @@ class VMHandler:
     # Private helpers
     # ------------------------------------------------------------------
 
+    async def list_templates(self) -> list:
+        """Return all OpenNebula templates accessible to the user."""
+        try:
+            pool = await asyncio.to_thread(
+                self.one.templatepool.info, -2, -1, -1
+            )
+            raw = getattr(pool, "VMTEMPLATE", [])
+            # pyone returns a single object (not a list) when there is only one template
+            if not isinstance(raw, list):
+                raw = [raw] if raw else []
+            return [{"id": tmpl.ID, "name": tmpl.NAME} for tmpl in raw]
+        except Exception as e:
+            logger.error(f"Error listing templates: {e}")
+            return []
+
     async def _find_template(self, template_name: str) -> int | None:
         """Find an OpenNebula template by name and return its ID."""
         try:
-            # List all templates accessible to the user (-2 = all, -1 = start, -1 = end)
-            templates = await asyncio.to_thread(
+            pool = await asyncio.to_thread(
                 self.one.templatepool.info, -2, -1, -1
             )
-            for tmpl in templates.VMTEMPLATE:
+            raw = getattr(pool, "VMTEMPLATE", [])
+            if not isinstance(raw, list):
+                raw = [raw] if raw else []
+            for tmpl in raw:
                 if tmpl.NAME == template_name:
                     return tmpl.ID
         except Exception as e:

@@ -5,21 +5,19 @@ import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import type { Plan } from "@/types";
 
-const osTemplates = [
-  { value: "ubuntu-22.04", label: "Ubuntu 22.04 LTS", icon: "🐧" },
-  { value: "ubuntu-20.04", label: "Ubuntu 20.04 LTS", icon: "🐧" },
-  { value: "debian-12", label: "Debian 12", icon: "🌀" },
-  { value: "centos-9", label: "CentOS Stream 9", icon: "🎯" },
-  { value: "rocky-9", label: "Rocky Linux 9", icon: "🪨" },
-  { value: "almalinux-9", label: "AlmaLinux 9", icon: "💠" },
-];
+interface OneTemplate {
+  id: number;
+  name: string;
+}
 
 export default function CreateVmPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [templates, setTemplates] = useState<OneTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
   const [form, setForm] = useState({
     name: "",
-    osTemplate: "ubuntu-22.04",
+    osTemplate: "",
     cpu: 1,
     ramMb: 1024,
     diskGb: 10,
@@ -38,6 +36,16 @@ export default function CreateVmPage() {
         if (p.length > 0) setForm((f) => ({ ...f, planId: p[0].id }));
       })
       .catch(() => {});
+
+    api
+      .get("/vms/templates")
+      .then(({ data }) => {
+        const t: OneTemplate[] = Array.isArray(data) ? data : [];
+        setTemplates(t);
+        if (t.length > 0) setForm((f) => ({ ...f, osTemplate: t[0].name }));
+      })
+      .catch(() => setTemplates([]))
+      .finally(() => setTemplatesLoading(false));
   }, []);
 
   const selectedPlan = plans.find((p) => p.id === form.planId);
@@ -111,27 +119,33 @@ export default function CreateVmPage() {
         {/* OS Template */}
         <div className="cyber-card">
           <h3 className="text-lg font-semibold text-cyber-text mb-4">
-            Operating System
+            Template
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {osTemplates.map((os) => (
-              <button
-                type="button"
-                key={os.value}
-                onClick={() => setForm({ ...form, osTemplate: os.value })}
-                className={`p-3 rounded-lg border text-left transition-all duration-200 ${
-                  form.osTemplate === os.value
-                    ? "border-cyber-green bg-cyber-green/10 shadow-glow-green"
-                    : "border-cyber-border hover:border-cyber-cyan/30"
-                }`}
-              >
-                <div className="text-xl mb-1">{os.icon}</div>
-                <div className="text-sm font-medium text-cyber-text">
-                  {os.label}
-                </div>
-              </button>
-            ))}
-          </div>
+          {templatesLoading ? (
+            <p className="text-cyber-text-dim text-sm">Loading templates...</p>
+          ) : templates.length === 0 ? (
+            <p className="text-cyber-text-dim text-sm">No templates found.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {templates.map((tmpl) => (
+                <button
+                  type="button"
+                  key={tmpl.id}
+                  onClick={() => setForm({ ...form, osTemplate: tmpl.name })}
+                  className={`p-3 rounded-lg border text-left transition-all duration-200 ${
+                    form.osTemplate === tmpl.name
+                      ? "border-cyber-green bg-cyber-green/10 shadow-glow-green"
+                      : "border-cyber-border hover:border-cyber-cyan/30"
+                  }`}
+                >
+                  <div className="text-xl mb-1">🖥️</div>
+                  <div className="text-sm font-medium text-cyber-text">
+                    {tmpl.name}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Plan Selection */}

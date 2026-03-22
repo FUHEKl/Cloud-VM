@@ -158,7 +158,7 @@ Update your `.env` file with OpenNebula connection details:
 
 ```env
 # OpenNebula
-ONE_XMLRPC=http://192.168.1.10:2633/RPC2
+ONE_XMLRPC=http://100.92.104.35:2633/RPC2
 ONE_AUTH_TOKEN=cloudvm-api:YourSecurePassword123!
 ```
 

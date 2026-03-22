@@ -1,6 +1,7 @@
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import { forwardParsedBody } from "./proxy-body.util";
 
 @Injectable()
 export class SshKeyProxyMiddleware implements NestMiddleware {
@@ -9,6 +10,9 @@ export class SshKeyProxyMiddleware implements NestMiddleware {
     changeOrigin: true,
     pathRewrite: {
       "^/api/ssh-keys": "/ssh-keys",
+    },
+    onProxyReq: (proxyReq, req) => {
+      forwardParsedBody(proxyReq, req as Request);
     },
     onError: (err, req, res) => {
       console.error("SSH Key proxy error:", err.message);

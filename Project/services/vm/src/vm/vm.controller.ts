@@ -27,6 +27,11 @@ export class VmController {
     return this.vmService.createVm(dto, user.userId);
   }
 
+  @Get("templates")
+  getTemplates() {
+    return this.vmService.getTemplates();
+  }
+
   @Get("stats")
   getStats(@CurrentUser() user: { userId: string; role: string }) {
     return this.vmService.getStats(user.userId, user.role);

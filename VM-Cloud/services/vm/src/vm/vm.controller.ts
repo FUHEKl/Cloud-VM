@@ -32,6 +32,11 @@ export class VmController {
     return this.vmService.getStats(user.userId, user.role);
   }
 
+  @Get("templates")
+  getTemplates() {
+    return this.vmService.getTemplates();
+  }
+
   @Get()
   findAll(
     @CurrentUser() user: { userId: string; role: string },

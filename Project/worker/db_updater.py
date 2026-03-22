@@ -68,3 +68,58 @@ def update_vm_status(
     finally:
         if conn:
             conn.close()
+
+
+def get_vm_one_id(vm_id: str) -> int | None:
+    """Return the oneVmId for a VM, or None if not yet assigned."""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute('SELECT "oneVmId" FROM virtual_machines WHERE id = %s', (vm_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Error fetching oneVmId for VM {vm_id}: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_vms_pending_sync() -> list:
+    """Return VMs in PENDING or ERROR state that already have a oneVmId (need IP polling resumed)."""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT id, "oneVmId" FROM virtual_machines '
+                "WHERE status IN ('PENDING', 'ERROR') AND \"oneVmId\" IS NOT NULL"
+            )
+            return [{"vmId": row[0], "oneVmId": row[1]} for row in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Error fetching pending VMs: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_user_ssh_keys(user_id: str) -> list:
+    """Return all SSH public keys for a user."""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT "publicKey" FROM ssh_keys WHERE "userId" = %s',
+                (user_id,),
+            )
+            return [row[0] for row in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Error fetching SSH keys for user {user_id}: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()

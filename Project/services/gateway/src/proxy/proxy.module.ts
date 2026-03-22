@@ -15,22 +15,37 @@ export class ProxyModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply(AuthProxyMiddleware)
-      .forRoutes({ path: "api/auth/*", method: RequestMethod.ALL });
+      .forRoutes(
+        { path: "api/auth", method: RequestMethod.ALL },
+        { path: "api/auth/*", method: RequestMethod.ALL },
+      );
 
     consumer
       .apply(UserProxyMiddleware)
-      .forRoutes({ path: "api/users/*", method: RequestMethod.ALL });
+      .forRoutes(
+        { path: "api/users", method: RequestMethod.ALL },
+        { path: "api/users/*", method: RequestMethod.ALL },
+      );
 
     consumer
       .apply(SshKeyProxyMiddleware)
-      .forRoutes({ path: "api/ssh-keys/*", method: RequestMethod.ALL });
+      .forRoutes(
+        { path: "api/ssh-keys", method: RequestMethod.ALL },
+        { path: "api/ssh-keys/*", method: RequestMethod.ALL },
+      );
 
     consumer
       .apply(VmProxyMiddleware)
-      .forRoutes({ path: "api/vms/*", method: RequestMethod.ALL });
+      .forRoutes(
+        { path: "api/vms", method: RequestMethod.ALL },
+        { path: "api/vms/*", method: RequestMethod.ALL },
+      );
 
     consumer
       .apply(PlanProxyMiddleware)
-      .forRoutes({ path: "api/plans/*", method: RequestMethod.ALL });
+      .forRoutes(
+        { path: "api/plans", method: RequestMethod.ALL },
+        { path: "api/plans/*", method: RequestMethod.ALL },
+      );
   }
 }

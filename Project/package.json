@@ -16,5 +16,8 @@
     "stop": "docker-compose down",
     "db:migrate": "cd services/auth && npx prisma migrate dev",
     "db:seed": "cd services/auth && npx prisma db seed"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1"
   }
 }

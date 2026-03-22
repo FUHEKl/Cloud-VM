@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum VmStatus {
+  PENDING
+  RUNNING
+  STOPPED
+  SUSPENDED
+  ERROR
+  DELETED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  firstName     String
+  lastName      String
+  role          Role           @default(USER)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  refreshTokens RefreshToken[]
+  sshKeys       SshKey[]
+  virtualMachines VirtualMachine[]
+  quota         UserQuota?
+  payments      Payment[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+model SshKey {
+  id          String   @id @default(uuid())
+  name        String
+  publicKey   String   @db.Text
+  fingerprint String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@map("ssh_keys")
+}
+
+model Plan {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  cpu         Int
+  ramMb       Int
+  diskGb      Int
+  priceMonthly Float
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  virtualMachines VirtualMachine[]
+
+  @@map("plans")
+}
+
+model VirtualMachine {
+  id            String   @id @default(uuid())
+  name          String
+  oneVmId       Int?
+  status        VmStatus @default(PENDING)
+  cpu           Int
+  ramMb         Int
+  diskGb        Int
+  ipAddress     String?
+  osTemplate    String
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId        String?
+  plan          Plan?    @relation(fields: [planId], references: [id])
+  sshHost       String?
+  sshPort       Int?     @default(22)
+  sshUsername   String?  @default("root")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("virtual_machines")
+}
+
+model UserQuota {
+  id        String @id @default(uuid())
+  userId    String @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  maxVms    Int    @default(3)
+  maxCpu    Int    @default(4)
+  maxRamMb  Int    @default(4096)
+  maxDiskGb Int    @default(50)
+
+  @@map("user_quotas")
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Float
+  currency  String   @default("DZD")
+  status    String   @default("pending")
+  method    String?
+  createdAt DateTime @default(now())
+
+  @@map("payments")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}

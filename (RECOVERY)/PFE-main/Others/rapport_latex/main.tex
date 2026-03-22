@@ -1,0 +1,250 @@
+% ============================================================
+% CloudVM PFE Report — Main File
+% ISET Mahdia — 2025/2026
+% Compile with: pdflatex or xelatex
+% ============================================================
+\documentclass[a4paper, 12pt, oneside]{report}
+
+% ============================================================
+% PACKAGES
+% ============================================================
+% --- Encoding & Language ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+
+% --- Page Layout ---
+\usepackage[top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+% --- Fonts ---
+\usepackage{times} % Times New Roman-like font
+
+% --- Graphics & Colors ---
+\usepackage{graphicx}
+\usepackage[table,xcdraw]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{shapes, arrows, positioning, calc}
+
+% --- Tables ---
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{longtable}          % Tables that span multiple pages
+\usepackage{ltablex}            % Combines longtable + tabularx
+\keepXaliases                   % Keep X column type from tabularx in ltablex
+\usepackage{multirow}
+\usepackage{makecell}           % Line breaks inside cells
+
+% --- Lists ---
+\usepackage{enumitem}
+
+% --- Code Listings ---
+\usepackage{listings}
+\usepackage{fancyvrb}
+
+% --- Hyperlinks ---
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue, citecolor=blue]{hyperref}
+
+% --- Captions ---
+\usepackage{caption}
+\usepackage{subcaption}
+
+% --- Header & Footer ---
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% --- Math ---
+\usepackage{amsmath}
+
+% --- Float control ---
+\usepackage{float}
+
+% --- PDF pages (for cover page) ---
+\usepackage{pdfpages}
+
+% --- Glossary (optional) ---
+% \usepackage[acronym]{glossaries}
+
+% --- Bibliography ---
+\usepackage[backend=biber, style=ieee]{biblatex}
+% \addbibresource{references.bib}
+
+% ============================================================
+% CUSTOM COMMANDS
+% ============================================================
+
+% Sprint card environment  
+\newcommand{\sprintcard}[3]{%
+  \begin{center}
+  \setlength{\fboxrule}{1pt}
+  \fcolorbox{black}{blue!10}{%
+    \begin{minipage}{0.9\textwidth}
+      \vspace{0.3cm}
+      \textbf{\large Sprint #1: #2}\\[0.2cm]
+      \textbf{Goal:} #3
+      \vspace{0.3cm}
+    \end{minipage}
+  }
+  \end{center}
+}
+
+% User story card
+\newcommand{\userstory}[4]{%
+  \noindent\fcolorbox{gray}{yellow!10}{%
+    \begin{minipage}{0.92\textwidth}
+      \vspace{0.2cm}
+      \textbf{#1}: As #2, I want to #3 so that #4.
+      \vspace{0.2cm}
+    \end{minipage}
+  }\\[0.3cm]
+}
+
+% Technology badge
+\newcommand{\techbadge}[1]{%
+  \colorbox{blue!15}{\texttt{\small #1}}%
+}
+
+% ============================================================
+% LISTINGS CONFIGURATION
+% ============================================================
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=flexible,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue}\bfseries,
+  commentstyle=\color{green!50!black}\itshape,
+  stringstyle=\color{red!70!black},
+  showstringspaces=false,
+  tabsize=2,
+  captionpos=b
+}
+
+% ============================================================
+% DOCUMENT INFO
+% ============================================================
+\title{
+  \vspace{-2cm}
+  \textbf{End of Studies Project Report}\\[0.5cm]
+  \Large Design and Development of a Cloud Virtual Machine Management Platform\\[0.5cm]
+  \large CloudVM Platform
+}
+
+\author{
+  \textbf{Prepared by:}\\
+  Student 1 Name (DSI)\\
+  Student 2 Name (RSI)\\[1cm]
+  \textbf{Supervised by:}\\
+  Supervisor Name\\[1cm]
+  \textbf{Host Organization:}\\
+  Readdly Startup
+}
+
+\date{Academic Year 2025--2026}
+
+% ============================================================
+% BEGIN DOCUMENT
+% ============================================================
+\begin{document}
+
+% --- Cover Page ---
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+% --- Dedications (optional) ---
+% \chapter*{Dedications}
+% I dedicate this work to...
+% \newpage
+
+% --- Acknowledgments ---
+\chapter*{Acknowledgments}
+\addcontentsline{toc}{chapter}{Acknowledgments}
+We would like to express our sincere gratitude to all those who contributed to the completion of this project. We especially thank our supervisor for their guidance, the Readdly startup team for hosting us, and the faculty of ISET Mahdia for their continuous support throughout our academic journey.
+\newpage
+
+% --- Table of Contents ---
+\tableofcontents
+\newpage
+
+% --- List of Figures ---
+\listoffigures
+\addcontentsline{toc}{chapter}{List of Figures}
+\newpage
+
+% --- List of Tables ---
+\listoftables
+\addcontentsline{toc}{chapter}{List of Tables}
+\newpage
+
+% --- General Introduction ---
+\chapter*{General Introduction}
+\addcontentsline{toc}{chapter}{General Introduction}
+
+Cloud computing has become an essential pillar of modern IT infrastructure, enabling businesses and individuals to access computing resources on demand without the need for physical hardware investments. Platforms such as Amazon Web Services (AWS), Microsoft Azure, and Google Cloud Platform (GCP) have demonstrated the immense value of Infrastructure-as-a-Service (IaaS) solutions.
+
+In this context, our end-of-studies project, carried out within the startup \textbf{Readdly}, aims to design and develop a web-based platform called \textbf{CloudVM} that enables users to create, manage, and monitor virtual machines online. The platform targets individuals and small businesses who need affordable, self-service cloud computing resources.
+
+The project follows a \textbf{microservices architecture}, leveraging modern technologies such as Next.js for the frontend, NestJS for the backend services, Python for the asynchronous worker, and OpenNebula for VM orchestration on the server side. Security is ensured through firewall configuration and JWT-based authentication.
+
+This report documents the entire development process, following the \textbf{Agile/Scrum methodology} with weekly sprints. It is organized as follows:
+
+\begin{itemize}
+  \item \textbf{Chapter 1:} General Context — presents the project framework, existing solutions, proposed solution, methodology, and development tools.
+  \item \textbf{Chapter 2:} Sprint 1 \& 2 — covers the landing page development and authentication service implementation.
+  \item \textbf{Chapter 3:} Sprint 3 \& 4 — details user management, dashboard, and the core VM management features.
+  \item \textbf{Chapter 4:} Sprint 5 \& 6 — covers the VM dashboard, quota system, and payment service.
+  \item \textbf{Chapter 5:} Sprint 7 \& 8 — addresses notifications, testing, deployment, and project finalization.
+\end{itemize}
+
+\newpage
+
+% ============================================================
+% CHAPTER 1: General Context
+% ============================================================
+\input{chapters/chapter1}
+
+% ============================================================
+% CHAPTER 2: Sprint 1 & 2 (Landing Page + Auth)
+% ============================================================
+% \input{chapters/chapter2}
+
+% ============================================================
+% CHAPTER 3: Sprint 3 & 4 (Users + VMs)
+% ============================================================
+% \input{chapters/chapter3}
+
+% ============================================================
+% CHAPTER 4: Sprint 5 & 6 (Quotas + Payments)
+% ============================================================
+% \input{chapters/chapter4}
+
+% ============================================================
+% CHAPTER 5: Sprint 7 & 8 (Testing + Deployment)
+% ============================================================
+% \input{chapters/chapter5}
+
+% --- General Conclusion ---
+% \chapter*{General Conclusion}
+% \addcontentsline{toc}{chapter}{General Conclusion}
+% To be written at the end of the project...
+
+% --- Bibliography ---
+% \printbibliography[heading=bibintoc, title={Bibliography}]
+
+% --- Appendices ---
+% \appendix
+% \chapter{API Documentation}
+% \chapter{Installation Guide}
+
+\end{document}

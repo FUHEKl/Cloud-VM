@@ -16,31 +16,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+STREAM_NAME = "VM"
+STREAM_SUBJECTS = ["vm.>"]
+
+
+async def ensure_stream(js) -> None:
+    """Create the JetStream VM stream if it does not exist yet."""
+    try:
+        await js.find_stream_name_by_subject("vm.create")
+        logger.info("JetStream stream 'VM' already exists")
+    except nats.js.errors.NotFoundError:
+        await js.add_stream(name=STREAM_NAME, subjects=STREAM_SUBJECTS)
+        logger.info("Created JetStream stream 'VM'")
+
 
 async def main():
     logger.info("Starting worker...")
 
-    # Connect to NATS
     nc = await nats.connect(NATS_URL)
     js = nc.jetstream()
     logger.info(f"Connected to NATS at {NATS_URL}")
 
-    # Connect to Redis
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
     redis_client.ping()
     logger.info(f"Connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
 
-    # Initialize VM handler
-    handler = VMHandler()
+    await ensure_stream(js)
 
-    # Ensure JetStream stream exists
-    try:
-        await js.find_stream_by_subject("vm.>")
-    except nats.js.errors.NotFoundError:
-        await js.add_stream(name="VM", subjects=["vm.>"])
-        logger.info("Created JetStream stream 'VM'")
+    handler = VMHandler(redis_client)
+    await handler.load_templates()
+    await handler.reconcile_pending_vms(nc)
 
-    # --- Subscription handlers ---
+    # ---------------------------------------------------------------
+    # EPHEMERAL consumers with DeliverPolicy.NEW
+    # Every restart = fresh start, no stale messages replayed.
+    # VMs are only created when the user explicitly requests from UI.
+    # ---------------------------------------------------------------
+    ephemeral_cfg = ConsumerConfig(deliver_policy=DeliverPolicy.NEW)
 
     async def handle_vm_create(msg):
         try:
@@ -72,34 +84,25 @@ async def main():
             logger.error(f"Error handling vm.delete: {e}", exc_info=True)
             await msg.nak()
 
-    # Subscribe with durable consumers
-    await js.subscribe(
-        "vm.create",
-        cb=handle_vm_create,
-        durable="worker-vm-create",
-        config=ConsumerConfig(deliver_policy=DeliverPolicy.ALL),
-    )
-    logger.info("Subscribed to vm.create")
+    await js.subscribe("vm.create", cb=handle_vm_create, config=ephemeral_cfg)
+    await js.subscribe("vm.action", cb=handle_vm_action, config=ephemeral_cfg)
+    await js.subscribe("vm.delete", cb=handle_vm_delete, config=ephemeral_cfg)
+    logger.info("Subscribed to vm.create / vm.action / vm.delete (ephemeral, NEW only)")
 
-    await js.subscribe(
-        "vm.action",
-        cb=handle_vm_action,
-        durable="worker-vm-action",
-        config=ConsumerConfig(deliver_policy=DeliverPolicy.ALL),
-    )
-    logger.info("Subscribed to vm.action")
+    async def handle_templates_list(msg):
+        try:
+            templates = await handler.get_template_list()
+            if msg.reply:
+                await nc.publish(msg.reply, json.dumps(templates).encode())
+        except Exception as e:
+            logger.error(f"Error handling templates.list: {e}", exc_info=True)
+            if msg.reply:
+                await nc.publish(msg.reply, json.dumps([]).encode())
 
-    await js.subscribe(
-        "vm.delete",
-        cb=handle_vm_delete,
-        durable="worker-vm-delete",
-        config=ConsumerConfig(deliver_policy=DeliverPolicy.ALL),
-    )
-    logger.info("Subscribed to vm.delete")
+    await nc.subscribe("templates.list", cb=handle_templates_list)
+    logger.info("Subscribed to templates.list (core NATS request-reply)")
+    logger.info("Worker ready — waiting for messages...")
 
-    logger.info("Worker is ready and listening for messages...")
-
-    # Keep the worker alive
     try:
         while True:
             await asyncio.sleep(1)

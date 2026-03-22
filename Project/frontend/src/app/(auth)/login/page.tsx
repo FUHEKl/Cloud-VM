@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { getErrorMessage } from "@/lib/error";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,8 +20,8 @@ export default function LoginPage() {
     try {
       await login(form.email, form.password);
       router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.response?.data?.message || "Invalid email or password");
+    } catch (err) {
+      setError(getErrorMessage(err, "Invalid email or password"));
     } finally {
       setLoading(false);
     }

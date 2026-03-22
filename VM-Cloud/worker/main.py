@@ -97,6 +97,19 @@ async def main():
     )
     logger.info("Subscribed to vm.delete")
 
+    # Core NATS request-reply for templates listing
+    async def handle_templates_list(msg):
+        try:
+            templates = await handler.list_templates()
+            reply = json.dumps({"templates": templates}).encode()
+            await nc.publish(msg.reply, reply)
+        except Exception as e:
+            logger.error(f"Error handling vm.templates.list: {e}", exc_info=True)
+            await nc.publish(msg.reply, json.dumps({"templates": [], "error": str(e)}).encode())
+
+    await nc.subscribe("vm.templates.list", cb=handle_templates_list)
+    logger.info("Subscribed to vm.templates.list")
+
     logger.info("Worker is ready and listening for messages...")
 
     # Keep the worker alive

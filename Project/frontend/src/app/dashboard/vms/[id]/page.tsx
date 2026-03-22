@@ -5,28 +5,35 @@ import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import api from "@/lib/api";
 import type { VirtualMachine } from "@/types";
+import { useVmSocket } from "@/hooks/useVmSocket";
 
 const Terminal = dynamic(() => import("@/components/terminal/Terminal"), {
   ssr: false,
 });
 
-const statusConfig: Record<string, { color: string; pulse: boolean }> = {
-  RUNNING: { color: "text-cyber-green", pulse: true },
-  STOPPED: { color: "text-gray-400", pulse: false },
-  PENDING: { color: "text-cyber-orange", pulse: true },
-  CREATING: { color: "text-cyber-cyan", pulse: true },
-  ERROR: { color: "text-cyber-red", pulse: false },
-  DELETED: { color: "text-gray-600", pulse: false },
+const statusConfig: Record<
+  string,
+  { color: string; pulse: boolean; label: string }
+> = {
+  RUNNING:  { color: "text-cyber-green",  pulse: true,  label: "Running"         },
+  STOPPED:  { color: "text-gray-400",     pulse: false, label: "Stopped"         },
+  PENDING:  { color: "text-cyber-orange", pulse: true,  label: "Pending"         },
+  PROLOG:   { color: "text-cyber-cyan",   pulse: true,  label: "Preparing disk…" },
+  BOOT:     { color: "text-cyber-cyan",   pulse: true,  label: "Booting…"        },
+  MIGRATE:  { color: "text-cyber-cyan",   pulse: true,  label: "Migrating…"      },
+  SHUTDOWN: { color: "text-cyber-orange", pulse: true,  label: "Shutting down…"  },
+  ERROR:    { color: "text-cyber-red",    pulse: false, label: "Error"           },
+  DELETED:  { color: "text-gray-600",     pulse: false, label: "Deleted"         },
 };
 
 export default function VmDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const router = useRouter();
-  const [vm, setVm] = useState<VirtualMachine | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { id }   = useParams<{ id: string }>();
+  const router   = useRouter();
+  const [vm, setVm]                   = useState<VirtualMachine | null>(null);
+  const [loading, setLoading]         = useState(true);
   const [actionLoading, setActionLoading] = useState("");
-  const [showTerminal, setShowTerminal] = useState(false);
-  const [error, setError] = useState("");
+  const [showTerminal, setShowTerminal]   = useState(false);
+  const [error, setError]             = useState("");
 
   const fetchVm = useCallback(async () => {
     try {
@@ -44,6 +51,29 @@ export default function VmDetailPage() {
     const interval = setInterval(fetchVm, 10000);
     return () => clearInterval(interval);
   }, [fetchVm]);
+
+  // Real-time status updates via WebSocket — instant, no 10s wait
+  useVmSocket((update) => {
+    if (update.vmId !== id) return;
+
+    if (update.status === "DELETED") {
+      router.push("/dashboard/vms");
+      return;
+    }
+
+    setVm((prev) =>
+      prev
+        ? {
+            ...prev,
+            status:    update.status as VirtualMachine["status"],
+            ipAddress: update.ipAddress ?? prev.ipAddress,
+            oneVmId:   update.oneVmId   ?? prev.oneVmId,
+            sshHost:   update.sshHost   ?? (prev as any).sshHost,
+            updatedAt: new Date().toISOString(),
+          }
+        : prev,
+    );
+  });
 
   const handleAction = async (action: string) => {
     setActionLoading(action);
@@ -99,7 +129,7 @@ export default function VmDetailPage() {
 
   if (!vm) return null;
 
-  const cfg = statusConfig[vm.status] || statusConfig.PENDING;
+  const cfg       = statusConfig[vm.status] ?? statusConfig.PENDING;
   const isRunning = vm.status === "RUNNING";
 
   return (
@@ -115,15 +145,15 @@ export default function VmDetailPage() {
               {cfg.pulse && (
                 <span className="w-2 h-2 rounded-full bg-current animate-pulse" />
               )}
-              {vm.status}
+              {cfg.label}
             </span>
           </div>
           <p className="text-cyber-text-dim text-sm">
             Created{" "}
             {new Date(vm.createdAt).toLocaleDateString("en-US", {
-              year: "numeric",
+              year:  "numeric",
               month: "long",
-              day: "numeric",
+              day:   "numeric",
             })}
           </p>
         </div>
@@ -267,7 +297,7 @@ export default function VmDetailPage() {
             </div>
             <div className="flex justify-between py-2">
               <span className="text-cyber-text-dim">Status</span>
-              <span className={`font-medium ${cfg.color}`}>{vm.status}</span>
+              <span className={`font-medium ${cfg.color}`}>{cfg.label}</span>
             </div>
           </div>
         </div>

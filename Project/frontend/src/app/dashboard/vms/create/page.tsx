@@ -5,21 +5,16 @@ import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import type { Plan } from "@/types";
 
-const osTemplates = [
-  { value: "ubuntu-22.04", label: "Ubuntu 22.04 LTS", icon: "🐧" },
-  { value: "ubuntu-20.04", label: "Ubuntu 20.04 LTS", icon: "🐧" },
-  { value: "debian-12", label: "Debian 12", icon: "🌀" },
-  { value: "centos-9", label: "CentOS Stream 9", icon: "🎯" },
-  { value: "rocky-9", label: "Rocky Linux 9", icon: "🪨" },
-  { value: "almalinux-9", label: "AlmaLinux 9", icon: "💠" },
-];
-
 export default function CreateVmPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [osTemplates, setOsTemplates] = useState<
+    { id: number; name: string }[]
+  >([]);
+  const [templatesLoading, setTemplatesLoading] = useState(true);
   const [form, setForm] = useState({
     name: "",
-    osTemplate: "ubuntu-22.04",
+    osTemplate: "",
     cpu: 1,
     ramMb: 1024,
     diskGb: 10,
@@ -28,6 +23,20 @@ export default function CreateVmPage() {
   const [useCustom, setUseCustom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .get("/vms/templates")
+      .then(({ data }) => {
+        const list = Array.isArray(data) ? data : [];
+        setOsTemplates(list);
+        if (list.length > 0) {
+          setForm((f) => ({ ...f, osTemplate: list[0].name }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setTemplatesLoading(false));
+  }, []);
 
   useEffect(() => {
     api
@@ -114,23 +123,33 @@ export default function CreateVmPage() {
             Operating System
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {osTemplates.map((os) => (
-              <button
-                type="button"
-                key={os.value}
-                onClick={() => setForm({ ...form, osTemplate: os.value })}
-                className={`p-3 rounded-lg border text-left transition-all duration-200 ${
-                  form.osTemplate === os.value
-                    ? "border-cyber-green bg-cyber-green/10 shadow-glow-green"
-                    : "border-cyber-border hover:border-cyber-cyan/30"
-                }`}
-              >
-                <div className="text-xl mb-1">{os.icon}</div>
-                <div className="text-sm font-medium text-cyber-text">
-                  {os.label}
-                </div>
-              </button>
-            ))}
+            {templatesLoading ? (
+              <p className="text-sm text-cyber-text-dim col-span-3">
+                Loading templates from OpenNebula...
+              </p>
+            ) : osTemplates.length === 0 ? (
+              <p className="text-sm text-cyber-text-dim col-span-3">
+                No templates available. Contact an administrator.
+              </p>
+            ) : (
+              osTemplates.map((os) => (
+                <button
+                  type="button"
+                  key={os.name}
+                  onClick={() => setForm({ ...form, osTemplate: os.name })}
+                  className={`p-3 rounded-lg border text-left transition-all duration-200 ${
+                    form.osTemplate === os.name
+                      ? "border-cyber-green bg-cyber-green/10 shadow-glow-green"
+                      : "border-cyber-border hover:border-cyber-cyan/30"
+                  }`}
+                >
+                  <div className="text-xl mb-1">💿</div>
+                  <div className="text-sm font-medium text-cyber-text">
+                    {os.name}
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </div>
 

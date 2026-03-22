@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/api";
 import type { VirtualMachine } from "@/types";
+import { useVmSocket } from "@/hooks/useVmSocket";
 
 export default function VmsListPage() {
   const [vms, setVms] = useState<VirtualMachine[]>([]);
@@ -29,6 +30,26 @@ export default function VmsListPage() {
     loadVms();
   }, [search, statusFilter]);
 
+  // Real-time VM status updates via WebSocket
+  useVmSocket((update) => {
+    setVms((prev) => {
+      // If the VM was deleted, remove it from the list
+      if (update.status === "DELETED") {
+        return prev.filter((vm) => vm.id !== update.vmId);
+      }
+      // Otherwise update it in-place
+      return prev.map((vm) =>
+        vm.id === update.vmId
+          ? {
+              ...vm,
+              status: update.status as VirtualMachine["status"],
+              ipAddress: update.ipAddress ?? vm.ipAddress,
+            }
+          : vm,
+      );
+    });
+  });
+
   const handleAction = async (vmId: string, action: string) => {
     if (action === "delete" && !confirm("Delete this VM?")) return;
     try {
@@ -44,12 +65,26 @@ export default function VmsListPage() {
   };
 
   const statusBadge: Record<string, string> = {
-    RUNNING: "cyber-badge-green",
-    STOPPED: "cyber-badge-red",
-    PENDING: "cyber-badge-orange",
-    ERROR: "cyber-badge-red",
-    SUSPENDED: "cyber-badge-orange",
-    DELETED: "cyber-badge-red",
+    RUNNING:  "cyber-badge-green",
+    STOPPED:  "cyber-badge-red",
+    PENDING:  "cyber-badge-orange",
+    PROLOG:   "cyber-badge-orange",
+    BOOT:     "cyber-badge-orange",
+    ERROR:    "cyber-badge-red",
+    SUSPENDED:"cyber-badge-orange",
+    DELETED:  "cyber-badge-red",
+  };
+
+  const statusLabel: Record<string, string> = {
+    RUNNING:  "Running",
+    STOPPED:  "Stopped",
+    PENDING:  "Pending",
+    PROLOG:   "Preparing…",
+    BOOT:     "Booting…",
+    MIGRATE:  "Migrating…",
+    SHUTDOWN: "Shutting down…",
+    ERROR:    "Error",
+    DELETED:  "Deleted",
   };
 
   return (
@@ -141,7 +176,7 @@ export default function VmsListPage() {
                   {vm.name}
                 </Link>
                 <span className={statusBadge[vm.status] || "cyber-badge"}>
-                  {vm.status}
+                  {statusLabel[vm.status] ?? vm.status}
                 </span>
               </div>
 

@@ -41,7 +41,8 @@ export class TerminalGateway implements OnGatewayDisconnect {
   @SubscribeMessage("connect-ssh")
   async handleConnectSsh(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { vmId: string; password: string },
+    @MessageBody()
+    payload: { vmId: string; password?: string; username?: string },
   ) {
     try {
       // Verify JWT from handshake
@@ -64,7 +65,6 @@ export class TerminalGateway implements OnGatewayDisconnect {
         return;
       }
 
-      // Fetch VM from database
       const vm = await this.prisma.virtualMachine.findUnique({
         where: { id: payload.vmId },
       });
@@ -74,13 +74,11 @@ export class TerminalGateway implements OnGatewayDisconnect {
         return;
       }
 
-      // Verify ownership or admin
       if (user.role !== "ADMIN" && vm.userId !== user.sub) {
         client.emit("error", { message: "Access denied" });
         return;
       }
 
-      // Check VM is running
       if (vm.status !== "RUNNING") {
         client.emit("error", {
           message: `VM is not running (current status: ${vm.status})`,
@@ -93,12 +91,12 @@ export class TerminalGateway implements OnGatewayDisconnect {
         return;
       }
 
-      // Create SSH connection
       const sshClient = new Client();
+      const username = payload.username ?? vm.sshUsername ?? "root";
 
       sshClient.on("ready", () => {
         this.logger.log(
-          `SSH connection ready for VM ${vm.id} (${vm.sshHost}:${vm.sshPort})`,
+          `SSH ready for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) as ${username}`,
         );
 
         sshClient.shell(
@@ -111,14 +109,13 @@ export class TerminalGateway implements OnGatewayDisconnect {
               return;
             }
 
-            // Store session
             this.sessions.set(client.id, { sshClient, stream });
 
+            // Emit "connected" with object shape — matches Terminal.tsx handler
             client.emit("connected", {
-              message: `Connected to ${vm.name}`,
+              message: `Connected to ${vm.name} (${vm.sshHost})`,
             });
 
-            // Pipe SSH output to socket
             stream.on("data", (data: Buffer) => {
               client.emit("output", data.toString("utf-8"));
             });
@@ -129,6 +126,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
             stream.on("close", () => {
               this.logger.log(`SSH stream closed for VM ${vm.id}`);
+              // Emit "disconnected" with object shape — matches Terminal.tsx handler
               client.emit("disconnected", { message: "SSH session closed" });
               this.cleanupSession(client.id);
             });
@@ -137,7 +135,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
       });
 
       sshClient.on("error", (err) => {
-        this.logger.error(`SSH connection error for VM ${vm.id}`, err.message);
+        this.logger.error(`SSH error for VM ${vm.id}`, err.message);
         client.emit("error", {
           message: `SSH connection failed: ${err.message}`,
         });
@@ -149,13 +147,12 @@ export class TerminalGateway implements OnGatewayDisconnect {
         this.cleanupSession(client.id);
       });
 
-      // Connect via password auth
       sshClient.connect({
         host: vm.sshHost,
         port: vm.sshPort ?? 22,
-        username: vm.sshUsername ?? "root",
-        password: payload.password,
-        readyTimeout: 10000,
+        username,
+        password: payload.password || undefined,
+        readyTimeout: 15000,
         keepaliveInterval: 30000,
       });
     } catch (error) {
@@ -186,16 +183,8 @@ export class TerminalGateway implements OnGatewayDisconnect {
   private cleanupSession(clientId: string) {
     const session = this.sessions.get(clientId);
     if (session) {
-      try {
-        session.stream?.close();
-      } catch {
-        // ignore
-      }
-      try {
-        session.sshClient?.end();
-      } catch {
-        // ignore
-      }
+      try { session.stream?.close(); }   catch { /* ignore */ }
+      try { session.sshClient?.end(); }  catch { /* ignore */ }
       this.sessions.delete(clientId);
     }
   }

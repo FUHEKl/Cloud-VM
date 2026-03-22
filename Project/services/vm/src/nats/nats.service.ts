@@ -1,24 +1,71 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { connect, NatsConnection, StringCodec, Subscription } from "nats";
+import {
+  connect,
+  NatsConnection,
+  StringCodec,
+  Subscription,
+  JetStreamClient,
+  RetentionPolicy,
+  StorageType,
+} from "nats";
 import { PrismaService } from "../prisma/prisma.service";
 import { VmStatus } from "@prisma/client";
+
+const DB_STATUSES = new Set<string>([
+  "PENDING",
+  "RUNNING",
+  "STOPPED",
+  "SUSPENDED",
+  "ERROR",
+  "DELETED",
+]);
+
+// These subjects must be published via JetStream (worker uses durable consumers)
+const JS_SUBJECTS = new Set(["vm.create", "vm.action", "vm.delete"]);
 
 @Injectable()
 export class NatsService implements OnModuleInit {
   private connection!: NatsConnection;
+  private js!: JetStreamClient;
   private readonly sc = StringCodec();
   private readonly logger = new Logger(NatsService.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
+    const natsUrl = process.env.NATS_URL || "nats://localhost:4222";
+    let retries = 12;
+    while (retries-- > 0) {
+      try {
+        this.connection = await connect({ servers: natsUrl });
+        this.js = this.connection.jetstream();
+        this.logger.log(`Connected to NATS at ${natsUrl}`);
+        await this.ensureStream();
+        this.subscribeToStatusUpdates();
+        return;
+      } catch (error) {
+        this.logger.warn(`NATS connect failed, retrying… (${retries} left): ${error}`);
+        await new Promise((r) => setTimeout(r, 2500));
+      }
+    }
+    this.logger.error("Failed to connect to NATS after retries");
+  }
+
+  private async ensureStream(): Promise<void> {
+    const jsm = await this.connection.jetstreamManager();
     try {
-      const natsUrl = process.env.NATS_URL || "nats://localhost:4222";
-      this.connection = await connect({ servers: natsUrl });
-      this.logger.log(`Connected to NATS at ${natsUrl}`);
-      this.subscribeToStatusUpdates();
-    } catch (error) {
-      this.logger.error("Failed to connect to NATS", error);
+      await jsm.streams.info("VM");
+      this.logger.log("JetStream stream 'VM' already exists");
+    } catch {
+      await jsm.streams.add({
+        name: "VM",
+        subjects: ["vm.>"],
+        retention: RetentionPolicy.Limits,
+        storage: StorageType.File,
+        max_msgs: 100_000,
+        max_age: 24 * 60 * 60 * 1_000_000_000, // 24h in ns
+      });
+      this.logger.log("Created JetStream stream 'VM'");
     }
   }
 
@@ -27,8 +74,19 @@ export class NatsService implements OnModuleInit {
       this.logger.warn("NATS not connected, cannot publish");
       return;
     }
-    this.connection.publish(subject, this.sc.encode(JSON.stringify(data)));
-    this.logger.log(`Published to ${subject}`);
+    const payload = this.sc.encode(JSON.stringify(data));
+    if (JS_SUBJECTS.has(subject)) {
+      try {
+        await this.js.publish(subject, payload);
+        this.logger.log(`JetStream published to ${subject}`);
+      } catch (err) {
+        this.logger.error(`JetStream publish to '${subject}' failed: ${err}`);
+        throw err;
+      }
+    } else {
+      this.connection.publish(subject, payload);
+      this.logger.log(`Core NATS published to ${subject}`);
+    }
   }
 
   subscribe(
@@ -54,25 +112,52 @@ export class NatsService implements OnModuleInit {
     return sub;
   }
 
+  async request<T = any>(
+    subject: string,
+    data: Record<string, any>,
+    timeoutMs = 8000,
+  ): Promise<T | null> {
+    if (!this.connection) {
+      this.logger.warn("NATS not connected, cannot send request");
+      return null;
+    }
+    try {
+      const msg = await this.connection.request(
+        subject,
+        this.sc.encode(JSON.stringify(data)),
+        { timeout: timeoutMs },
+      );
+      return JSON.parse(this.sc.decode(msg.data)) as T;
+    } catch (error) {
+      this.logger.error(`NATS request to '${subject}' failed: ${error}`);
+      return null;
+    }
+  }
+
   private subscribeToStatusUpdates() {
     this.subscribe("vm.status.update", async (data) => {
       const { vmId, status, ipAddress, oneVmId, sshHost, sshPort } = data;
       this.logger.log(`Received status update for VM ${vmId}: ${status}`);
 
-      const updateData: Record<string, any> = {
-        status: status as VmStatus,
-      };
+      // Only write to DB for valid Prisma enum values.
+      // Intermediate states (BOOT, PROLOG…) are still broadcast by VmEventsGateway.
+      if (!DB_STATUSES.has(status)) {
+        this.logger.log(`Skipping DB update for intermediate status: ${status}`);
+        return;
+      }
+
+      const updateData: Record<string, any> = { status: status as VmStatus };
       if (ipAddress) updateData.ipAddress = ipAddress;
-      if (oneVmId) updateData.oneVmId = oneVmId;
-      if (sshHost) updateData.sshHost = sshHost;
-      if (sshPort) updateData.sshPort = sshPort;
+      if (oneVmId)   updateData.oneVmId   = oneVmId;
+      if (sshHost)   updateData.sshHost   = sshHost;
+      if (sshPort)   updateData.sshPort   = sshPort;
 
       try {
         await this.prisma.virtualMachine.update({
           where: { id: vmId },
           data: updateData,
         });
-        this.logger.log(`Updated VM ${vmId} status to ${status}`);
+        this.logger.log(`Persisted VM ${vmId} status=${status}`);
       } catch (error) {
         this.logger.error(`Failed to update VM ${vmId}`, error);
       }

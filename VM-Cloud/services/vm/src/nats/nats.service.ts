@@ -31,6 +31,22 @@ export class NatsService implements OnModuleInit {
     this.logger.log(`Published to ${subject}`);
   }
 
+  async request(
+    subject: string,
+    data: Record<string, any> = {},
+    timeoutMs = 5000,
+  ): Promise<any> {
+    if (!this.connection) {
+      throw new Error("NATS not connected");
+    }
+    const msg = await this.connection.request(
+      subject,
+      this.sc.encode(JSON.stringify(data)),
+      { timeout: timeoutMs },
+    );
+    return JSON.parse(this.sc.decode(msg.data));
+  }
+
   subscribe(
     subject: string,
     callback: (data: Record<string, any>) => void,
