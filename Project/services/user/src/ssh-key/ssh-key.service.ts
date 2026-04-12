@@ -12,6 +12,56 @@ import * as crypto from "crypto";
 export class SshKeyService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private base64UrlToBuffer(value: string): Buffer {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = normalized.length % 4;
+    const padded = normalized + (pad ? "=".repeat(4 - pad) : "");
+    return Buffer.from(padded, "base64");
+  }
+
+  private encodeSshField(data: Buffer): Buffer {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    return Buffer.concat([len, data]);
+  }
+
+  private encodeMpint(data: Buffer): Buffer {
+    let value = data;
+    while (value.length > 1 && value[0] === 0x00) {
+      value = value.subarray(1);
+    }
+    if (value.length === 0) {
+      value = Buffer.from([0]);
+    }
+    if ((value[0] & 0x80) !== 0) {
+      value = Buffer.concat([Buffer.from([0]), value]);
+    }
+    return this.encodeSshField(value);
+  }
+
+  private buildSshRsaPublicKeyFromJwk(n: string, e: string): string {
+    const keyType = Buffer.from("ssh-rsa", "utf8");
+    const exponent = this.base64UrlToBuffer(e);
+    const modulus = this.base64UrlToBuffer(n);
+
+    const payload = Buffer.concat([
+      this.encodeSshField(keyType),
+      this.encodeMpint(exponent),
+      this.encodeMpint(modulus),
+    ]);
+
+    return `ssh-rsa ${payload.toString("base64")}`;
+  }
+
+  private sanitizeKeyName(input: string): string {
+    const base = (input || "generated-key")
+      .trim()
+      .replace(/[^a-zA-Z0-9-_ ]/g, "")
+      .replace(/\s+/g, "-")
+      .slice(0, 48);
+    return base.length > 0 ? base : "generated-key";
+  }
+
   private generateFingerprint(publicKey: string): string {
     try {
       const parts = publicKey.trim().split(/\s+/);
@@ -50,6 +100,48 @@ export class SshKeyService {
         userId,
       },
     });
+  }
+
+  async generateAndCreate(userId: string, desiredName?: string) {
+    const safeName = this.sanitizeKeyName(desiredName || "My Generated Key");
+
+    const { publicKey, privateKey } = (crypto.generateKeyPairSync as any)("rsa", {
+      modulusLength: 3072,
+      publicKeyEncoding: {
+        format: "jwk",
+      },
+      privateKeyEncoding: {
+        format: "pem",
+        type: "pkcs8",
+      },
+    });
+
+    const jwk = publicKey as JsonWebKey;
+    if (!jwk.n || !jwk.e) {
+      throw new BadRequestException("Unable to generate SSH key pair");
+    }
+
+    const sshPublicKey = this.buildSshRsaPublicKeyFromJwk(jwk.n, jwk.e);
+    const fingerprint = this.generateFingerprint(sshPublicKey);
+
+    const created = await this.prisma.sshKey.create({
+      data: {
+        name: safeName,
+        publicKey: sshPublicKey,
+        fingerprint,
+        userId,
+      },
+    });
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `cloudvm-${safeName}-${timestamp}.pem`;
+
+    return {
+      key: created,
+      privateKey,
+      filename,
+      notice: "This private key is shown once. Save it securely now.",
+    };
   }
 
   async delete(id: string, userId: string) {

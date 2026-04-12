@@ -39,6 +39,13 @@ export interface SshKey {
   createdAt: string;
 }
 
+export interface GeneratedSshKeyResponse {
+  key: SshKey;
+  privateKey: string;
+  filename: string;
+  notice: string;
+}
+
 export interface Plan {
   id: string;
   name: string;

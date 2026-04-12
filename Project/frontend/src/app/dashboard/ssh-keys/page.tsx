@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
-import type { SshKey } from "@/types";
+import type { GeneratedSshKeyResponse, SshKey } from "@/types";
 
 export default function SshKeysPage() {
   const [keys, setKeys] = useState<SshKey[]>([]);
@@ -11,7 +11,20 @@ export default function SshKeysPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: "", publicKey: "" });
   const [submitting, setSubmitting] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+
+  const downloadPrivateKey = (filename: string, privateKey: string) => {
+    const blob = new Blob([privateKey], { type: "application/x-pem-file" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const loadKeys = async () => {
     try {
@@ -54,6 +67,31 @@ export default function SshKeysPage() {
     }
   };
 
+  const handleGenerateKey = async () => {
+    setError("");
+    setGenerating(true);
+    try {
+      const generatedName = `Auto Key ${new Date().toLocaleDateString()}`;
+      const { data } = await api.post<GeneratedSshKeyResponse>(
+        "/ssh-keys/generate",
+        { name: generatedName },
+      );
+
+      if (data?.privateKey && data?.filename) {
+        downloadPrivateKey(data.filename, data.privateKey);
+      }
+
+      alert(
+        "SSH key generated and saved. Your private key download has started — keep it safe, it will not be shown again.",
+      );
+      await loadKeys();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to generate SSH key"));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-6">
@@ -78,6 +116,27 @@ export default function SshKeysPage() {
           </svg>
           Add SSH Key
         </button>
+      </div>
+
+      <div className="cyber-card mb-6 !p-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-cyber-text">
+              Quick start (recommended)
+            </h3>
+            <p className="text-sm text-cyber-text-dim mt-1">
+              Don&apos;t have an SSH key? Generate one automatically in one click.
+              We will save the public key and download your private key securely.
+            </p>
+          </div>
+          <button
+            onClick={handleGenerateKey}
+            disabled={generating}
+            className="cyber-btn-secondary !py-2.5"
+          >
+            {generating ? "Generating..." : "Generate Key For Me"}
+          </button>
+        </div>
       </div>
 
       {/* Add Key Form */}
@@ -164,14 +223,23 @@ export default function SshKeysPage() {
             No SSH Keys
           </h3>
           <p className="text-cyber-text-dim mb-4">
-            Add an SSH public key to securely connect to your VMs.
+            Add an SSH public key to securely connect to your VMs, or auto-generate one.
           </p>
-          <button
-            onClick={() => setShowForm(true)}
-            className="cyber-btn-primary !py-2.5"
-          >
-            Add Your First Key
-          </button>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={handleGenerateKey}
+              disabled={generating}
+              className="cyber-btn-primary !py-2.5"
+            >
+              {generating ? "Generating..." : "Generate Key For Me"}
+            </button>
+            <button
+              onClick={() => setShowForm(true)}
+              className="cyber-btn-secondary !py-2.5"
+            >
+              Add Manually
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
