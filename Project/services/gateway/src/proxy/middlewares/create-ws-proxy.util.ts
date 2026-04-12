@@ -16,6 +16,7 @@ export function createWsProxy({
     target,
     changeOrigin: true,
     ws: true,
+    xfwd: true,
     onError: (err, _req, res) => {
       console.error(`${errorLabel} proxy error:`, err.message);
       if (res && typeof (res as Response).headersSent !== "undefined") {

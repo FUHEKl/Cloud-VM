@@ -18,6 +18,7 @@ export function createJsonApiProxy({
   return createProxyMiddleware({
     target,
     changeOrigin: true,
+    xfwd: true,
     pathRewrite,
     onProxyReq: (proxyReq, req) => {
       forwardParsedBody(proxyReq, req as Request);

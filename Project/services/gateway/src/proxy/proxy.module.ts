@@ -14,40 +14,41 @@ import { TerminalApiProxyMiddleware } from "./middlewares/terminal-api-proxy.mid
 import { VmEventsProxyMiddleware } from "./middlewares/vm-events-proxy.middleware";
 import { AiProxyMiddleware } from "./middlewares/ai-proxy.middleware";
 import { AiChatProxyMiddleware } from "./middlewares/ai-chat-proxy.middleware";
+import { RedisRateLimitMiddleware } from "../security/redis-rate-limit.middleware";
 
 @Module({})
 export class ProxyModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
-      .apply(AuthProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, AuthProxyMiddleware)
       .forRoutes(
         { path: "api/auth", method: RequestMethod.ALL },
         { path: "api/auth/*", method: RequestMethod.ALL },
       );
 
     consumer
-      .apply(UserProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, UserProxyMiddleware)
       .forRoutes(
         { path: "api/users", method: RequestMethod.ALL },
         { path: "api/users/*", method: RequestMethod.ALL },
       );
 
     consumer
-      .apply(SshKeyProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, SshKeyProxyMiddleware)
       .forRoutes(
         { path: "api/ssh-keys", method: RequestMethod.ALL },
         { path: "api/ssh-keys/*", method: RequestMethod.ALL },
       );
 
     consumer
-      .apply(VmProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, VmProxyMiddleware)
       .forRoutes(
         { path: "api/vms", method: RequestMethod.ALL },
         { path: "api/vms/*", method: RequestMethod.ALL },
       );
 
     consumer
-      .apply(PlanProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, PlanProxyMiddleware)
       .forRoutes(
         { path: "api/plans", method: RequestMethod.ALL },
         { path: "api/plans/*", method: RequestMethod.ALL },
@@ -61,14 +62,14 @@ export class ProxyModule implements NestModule {
       );
 
     consumer
-      .apply(TerminalApiProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, TerminalApiProxyMiddleware)
       .forRoutes(
         { path: "api/terminal", method: RequestMethod.ALL },
         { path: "api/terminal/*", method: RequestMethod.ALL },
       );
 
     consumer
-      .apply(AiProxyMiddleware)
+      .apply(RedisRateLimitMiddleware, AiProxyMiddleware)
       .forRoutes(
         { path: "api/ai", method: RequestMethod.ALL },
         { path: "api/ai/*", method: RequestMethod.ALL },

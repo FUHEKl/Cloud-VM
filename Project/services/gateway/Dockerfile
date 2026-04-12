@@ -10,5 +10,6 @@ WORKDIR /app
 COPY --from=base /app/dist ./dist
 COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app/package.json ./
+USER node
 EXPOSE 3001
 CMD ["node", "dist/main.js"]
