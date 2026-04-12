@@ -258,14 +258,56 @@ def run_tests(base_url: str) -> Tuple[list[TestResult], int]:
         f"statuses={rl_statuses}, retry_after_seen={retry_after_seen}",
     )
 
-    # 8) Logout invalidates session
+    # 8) CSRF defense-in-depth: reject unsafe cookie-auth request from untrusted Origin
+    st_csrf, _, _ = session.request(
+        "POST",
+        "/api/auth/logout",
+        headers={"Origin": "http://evil.local"},
+    )
+    add(
+        "SEC-08",
+        "Untrusted Origin blocked for unsafe cookie-auth request",
+        st_csrf == 403,
+        f"status={st_csrf}",
+    )
+
+    # 9) Logout invalidates session
     st_logout, _, _ = session.request("POST", "/api/auth/logout")
     st_me_after, _, _ = session.request("GET", "/api/auth/me")
     add(
-        "SEC-08",
+        "SEC-09",
         "Logout invalidates authenticated session",
         st_logout == 200 and st_me_after == 401,
         f"logout_status={st_logout}, me_after={st_me_after}",
+    )
+
+    # 10) Logout-all revokes refresh tokens for other sessions/devices
+    email3 = f"logoutall.{int(time.time())}.{rand_suffix()}@example.com"
+    pwd3 = "Str0ng!Passw0rd#2026"
+
+    s1 = HttpClient(base_url, user_agent="CloudVM-UA-C")
+    s2 = HttpClient(base_url, user_agent="CloudVM-UA-D")
+
+    s1.request(
+        "POST",
+        "/api/auth/register",
+        {
+            "email": email3,
+            "password": pwd3,
+            "firstName": "Sess",
+            "lastName": "One",
+        },
+    )
+    s2.request("POST", "/api/auth/login", {"email": email3, "password": pwd3})
+
+    st_logout_all, _, _ = s1.request("POST", "/api/auth/logout-all")
+    st_refresh_after, _, _ = s2.request("POST", "/api/auth/refresh", {})
+
+    add(
+        "SEC-10",
+        "Logout-all revokes refresh tokens across sessions",
+        st_logout_all == 200 and st_refresh_after == 401,
+        f"logout_all={st_logout_all}, refresh_after={st_refresh_after}",
     )
 
     passed_count = sum(1 for r in results if r.passed)

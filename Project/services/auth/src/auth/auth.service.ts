@@ -1018,6 +1018,21 @@ export class AuthService {
     return { message: "Logged out successfully" };
   }
 
+  async logoutAllSessions(userId: string, req: Request) {
+    await this.prisma.refreshToken.deleteMany({
+      where: { userId },
+    });
+
+    this.securityLogger.log({
+      eventType: "auth.logout_all",
+      userId,
+      ip: getClientIp(req),
+      result: "success",
+    });
+
+    return { message: "Logged out from all sessions" };
+  }
+
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },

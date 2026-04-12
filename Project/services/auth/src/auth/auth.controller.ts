@@ -269,6 +269,17 @@ export class AuthController {
     return this.authService.logout(refreshToken, req);
   }
 
+  @Post("logout-all")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async logoutAll(
+    @Req() req: RequestWithUser,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    this.clearAuthCookies(req, res);
+    return this.authService.logoutAllSessions(req.user.userId, req);
+  }
+
   @Get("me")
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: { userId: string }) {
