@@ -2,10 +2,10 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import NextImage from "next/image";
-import Cookies from "js-cookie";
 import { io, Socket } from "socket.io-client";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { resolveApiOrigin } from "@/lib/runtime-urls";
 import type {
   AssistantConfirmActionResponse,
   AssistantConversation,
@@ -18,10 +18,7 @@ interface AssistantChatProps {
   onClose?: () => void;
 }
 
-const _rawApiUrl =
-  process.env.NEXT_PUBLIC_API_URL ||
-  (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
-const API_URL = _rawApiUrl.endsWith("/api") ? _rawApiUrl.slice(0, -4) : _rawApiUrl;
+const API_URL = resolveApiOrigin();
 
 interface AiStreamMeta {
   requestId: string;
@@ -112,13 +109,10 @@ export default function AssistantChat({
   }, [activeConversationId]);
 
   useEffect(() => {
-    const token = Cookies.get("accessToken");
-    if (!token) return;
-
     const socket = io(`${API_URL}/ai-chat`, {
       transports: ["websocket"],
       path: "/ai-chat/socket.io",
-      auth: { token },
+      withCredentials: true,
       reconnection: true,
       reconnectionDelay: 1500,
       reconnectionAttempts: 20,

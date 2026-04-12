@@ -8,8 +8,11 @@ import { getErrorMessage } from "@/lib/error";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, verifyMfa } = useAuth();
   const [form, setForm] = useState({ email: "", password: "" });
+  const [challengeId, setChallengeId] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [devOtpHint, setDevOtpHint] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,7 +22,19 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(form.email, form.password, rememberMe);
+      if (challengeId) {
+        await verifyMfa(challengeId, mfaCode.trim());
+        router.replace("/dashboard/profile");
+        return;
+      }
+
+      const result = await login(form.email, form.password, rememberMe);
+      if (result?.mfaRequired && result.challengeId) {
+        setChallengeId(result.challengeId);
+        setDevOtpHint(result.devOtp || "");
+        return;
+      }
+
       router.replace("/dashboard/profile");
     } catch (err) {
       setError(getErrorMessage(err, "Invalid email or password"));
@@ -59,10 +74,12 @@ export default function LoginPage() {
         {/* Card */}
         <div className="cyber-card">
           <h2 className="text-2xl font-bold text-cyber-text mb-2">
-            Welcome back
+            {challengeId ? "Admin verification" : "Welcome back"}
           </h2>
           <p className="text-cyber-text-dim text-sm mb-6">
-            Sign in to your account
+            {challengeId
+              ? "Enter your 6-digit MFA code to finish sign in"
+              : "Sign in to your account"}
           </p>
 
           {error && (
@@ -72,43 +89,73 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
-                Email
-              </label>
-              <input
-                type="email"
-                className="cyber-input"
-                placeholder="you@example.com"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                required
-              />
-            </div>
+            {!challengeId ? (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    className="cyber-input"
+                    placeholder="you@example.com"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    required
+                  />
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
-                Password
-              </label>
-              <input
-                type="password"
-                className="cyber-input"
-                placeholder="••••••••"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                required
-              />
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    className="cyber-input"
+                    placeholder="••••••••"
+                    value={form.password}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    required
+                  />
+                </div>
 
-            <label className="flex items-center gap-2 text-sm text-cyber-text-dim">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(event) => setRememberMe(event.target.checked)}
-                className="w-4 h-4 rounded border-cyber-border bg-cyber-bg"
-              />
-              <span>Remember me on this device</span>
-            </label>
+                <label className="flex items-center gap-2 text-sm text-cyber-text-dim">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(event) => setRememberMe(event.target.checked)}
+                    className="w-4 h-4 rounded border-cyber-border bg-cyber-bg"
+                  />
+                  <span>Remember me on this device</span>
+                </label>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
+                    MFA Code
+                  </label>
+                  <input
+                    type="text"
+                    className="cyber-input tracking-[0.35em] text-center"
+                    placeholder="123456"
+                    value={mfaCode}
+                    onChange={(e) =>
+                      setMfaCode(e.target.value.replace(/[^\d]/g, "").slice(0, 6))
+                    }
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    required
+                  />
+                </div>
+
+                {devOtpHint && (
+                  <p className="text-xs text-cyber-yellow">
+                    Dev hint (non-production only): code is <span className="font-semibold">{devOtpHint}</span>
+                  </p>
+                )}
+              </>
+            )}
 
             <button
               type="submit"
@@ -136,12 +183,27 @@ export default function LoginPage() {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                     />
                   </svg>
-                  Signing in...
+                  {challengeId ? "Verifying..." : "Signing in..."}
                 </span>
               ) : (
-                "Sign In"
+                challengeId ? "Verify & Continue" : "Sign In"
               )}
             </button>
+
+            {challengeId && (
+              <button
+                type="button"
+                className="cyber-btn-secondary w-full"
+                onClick={() => {
+                  setChallengeId("");
+                  setMfaCode("");
+                  setDevOtpHint("");
+                  setError("");
+                }}
+              >
+                Back to password login
+              </button>
+            )}
           </form>
 
           <div className="mt-6 text-center">

@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
-import Cookies from "js-cookie";
 import { saveGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
+import { resolveVmWsOrigin } from "@/lib/runtime-urls";
 
 export interface VmStatusUpdate {
   vmId: string;
@@ -42,19 +42,14 @@ export function useVmSocket(
   sshKeyCallbackRef.current = onSshKeyUpdate;
 
   useEffect(() => {
-    const token = Cookies.get("accessToken");
-    if (!token) return;
-
     // Use the configured WS URL (HTTPS origin when behind Nginx).
     // Socket.IO upgrades to wss:// automatically when origin is https://.
-    const wsUrl =
-      process.env.NEXT_PUBLIC_VM_WS_URL ||
-      (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
+    const wsUrl = resolveVmWsOrigin();
 
     const socket = io(`${wsUrl}/vm-events`, {
       transports: ["websocket"],
       path: "/vm-events/socket.io",
-      auth: { token },
+      withCredentials: true,
       reconnection: true,
       reconnectionDelay: 2000,
       reconnectionAttempts: 15,

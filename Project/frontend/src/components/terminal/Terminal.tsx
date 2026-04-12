@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { io, Socket } from "socket.io-client";
-import Cookies from "js-cookie";
 import { Terminal as XTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
 import { getGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
+import { resolveVmWsOrigin } from "@/lib/runtime-urls";
 import "xterm/css/xterm.css";
 
 interface TerminalProps {
@@ -205,14 +205,6 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
       term.writeln(`  \x1b[90mTarget:\x1b[0m ${ipAddress}`);
       term.writeln("");
 
-      const token = Cookies.get("accessToken") ?? null;
-      if (!token) {
-        term.writeln(
-          "\x1b[31m✗ Authentication token missing. Please login again.\x1b[0m",
-        );
-        return;
-      }
-
       // Decide auth method up-front so we can show the password prompt
       // BEFORE opening the socket (avoids a double-render flash).
       const privateKey = getGeneratedVmSshPrivateKey(vmIdRef.current);
@@ -224,17 +216,14 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
 
       // Use the configured WS URL (must be the HTTPS origin when behind Nginx).
       // Socket.IO will automatically upgrade to wss:// when the origin is https://.
-      const wsBase =
-        process.env.NEXT_PUBLIC_VM_WS_URL ||
-        process.env.NEXT_PUBLIC_API_URL ||
-        (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
+      const wsBase = resolveVmWsOrigin();
 
       const socket = io(`${wsBase}/terminal`, {
         transports: ["websocket"],
         // Nginx proxies /terminal/ → gateway → vm service.
         // The namespace "/terminal" + path "/terminal/socket.io" are required.
         path: "/terminal/socket.io",
-        auth: { token },
+        withCredentials: true,
         reconnection: true,
         reconnectionAttempts: 10,
         reconnectionDelay: 500,
