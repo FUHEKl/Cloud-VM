@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import Cookies from "js-cookie";
+import { saveGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
 
 export interface VmStatusUpdate {
   vmId: string;
@@ -12,6 +13,11 @@ export interface VmStatusUpdate {
   oneVmId?: number;
   sshHost?: string;
   error?: string;
+}
+
+export interface VmSshKeyUpdate {
+  vmId: string;
+  privateKey: string;
 }
 
 /**
@@ -27,30 +33,45 @@ export interface VmStatusUpdate {
  */
 export function useVmSocket(
   onStatusUpdate?: (data: VmStatusUpdate) => void,
+  onSshKeyUpdate?: (data: VmSshKeyUpdate) => void,
 ): React.RefObject<Socket | null> {
   const socketRef = useRef<Socket | null>(null);
-  const callbackRef = useRef(onStatusUpdate);
-  callbackRef.current = onStatusUpdate;
+  const statusCallbackRef = useRef(onStatusUpdate);
+  const sshKeyCallbackRef = useRef(onSshKeyUpdate);
+  statusCallbackRef.current = onStatusUpdate;
+  sshKeyCallbackRef.current = onSshKeyUpdate;
 
   useEffect(() => {
     const token = Cookies.get("accessToken");
     if (!token) return;
 
+    // Use the configured WS URL (HTTPS origin when behind Nginx).
+    // Socket.IO upgrades to wss:// automatically when origin is https://.
     const wsUrl =
-      process.env.NEXT_PUBLIC_VM_WS_URL || "http://localhost:3004";
+      process.env.NEXT_PUBLIC_VM_WS_URL ||
+      (typeof window !== "undefined" ? window.location.origin : "http://localhost:3001");
 
     const socket = io(`${wsUrl}/vm-events`, {
       transports: ["websocket"],
+      path: "/vm-events/socket.io",
       auth: { token },
       reconnection: true,
       reconnectionDelay: 2000,
       reconnectionAttempts: 15,
+      secure: typeof window !== "undefined" && window.location.protocol === "https:",
     });
 
     socketRef.current = socket;
 
     socket.on("vm:status", (data: VmStatusUpdate) => {
-      callbackRef.current?.(data);
+      statusCallbackRef.current?.(data);
+    });
+
+    socket.on("vm:ssh-key", (data: VmSshKeyUpdate) => {
+      if (data?.vmId && data?.privateKey) {
+        saveGeneratedVmSshPrivateKey(data.vmId, data.privateKey);
+      }
+      sshKeyCallbackRef.current?.(data);
     });
 
     return () => {

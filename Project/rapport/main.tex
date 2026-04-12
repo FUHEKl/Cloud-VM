@@ -1,0 +1,510 @@
+\documentclass[12pt,a4paper]{report}
+
+% ---------- Encoding & Language ----------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+
+% ---------- Page ----------
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{parskip}
+
+% ---------- Useful packages ----------
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{ifthen}
+\usepackage{pdflscape}
+\usepackage{pgfgantt}
+\usepackage{tikz}
+
+% ---------- Hyperref ----------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  filecolor=magenta,
+  urlcolor=cyan!60!black,
+  pdftitle={PFE Report - Cloud VM Management Platform},
+  pdfauthor={Your Name},
+  pdfsubject={Final Year Project Report},
+  pdfkeywords={PFE, OpenNebula, Next.js, NestJS, VM, Agile, UML}
+}
+
+% ---------- Header/Footer ----------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{PFE Report}
+\fancyhead[R]{\leftmark}
+\fancyfoot[C]{\thepage}
+
+% ---------- Styling ----------
+\titleformat{\chapter}[display]
+  {\normalfont\bfseries\Huge}
+  {\chaptertitlename\ \thechapter}{20pt}{\Huge}
+
+% ---------- Custom commands ----------
+\newcommand{\projectTitle}{Design and Implementation of a Multi-Service Cloud VM Management Platform}
+\newcommand{\studentName}{Your Full Name}
+\newcommand{\teammateName}{Teammate Full Name}
+\newcommand{\supervisorName}{Supervisor Name}
+\newcommand{\academicYear}{2025--2026}
+
+% Safe figure include (compiles even if image not yet added)
+\newcommand{\safeimage}[4][0.9\textwidth]{%
+\begin{figure}[H]
+\centering
+\IfFileExists{#2}{
+    \includegraphics[width=#1]{#2}
+}{
+    \fbox{\parbox{0.85\textwidth}{
+    \centering
+    \vspace{0.5em}
+    Placeholder: add image file \texttt{#2}\\
+    Description: #3
+    \vspace{0.5em}
+    }}
+}
+\caption{#3}
+\label{#4}
+\end{figure}
+}
+
+% Teammate-owned section placeholder
+\newcommand{\serverowned}[1]{%
+\begin{center}
+\fcolorbox{red!60!black}{red!5}{
+\parbox{0.92\textwidth}{
+\textbf{[TO BE COMPLETED BY RSI/SERVER TEAMMATE]}\\
+#1
+}}
+\end{center}
+}
+
+\begin{document}
+
+% ---------- Cover ----------
+\begin{titlepage}
+    \centering
+    \vspace*{2cm}
+    {\Huge \textbf{\projectTitle} \par}
+    \vspace{1.5cm}
+    {\Large Final Year Project (PFE) Report\par}
+    \vspace{2cm}
+    \begin{tabular}{rl}
+        \textbf{Student (Development):} & \studentName \\
+        \textbf{Teammate (RSI/Server):} & \teammateName \\
+        \textbf{Supervisor:} & \supervisorName \\
+        \textbf{Academic Year:} & \academicYear \\
+    \end{tabular}
+    \vfill
+    {\large Department of Computer Science\\
+    University Name}
+\end{titlepage}
+
+% ---------- Front matter ----------
+\pagenumbering{roman}
+\chapter*{Acknowledgments}
+Write a short acknowledgment (supervisor, institution, teammate, family).
+
+\chapter*{Abstract}
+This report presents the design and implementation of a cloud VM management platform based on a microservice architecture.
+The solution includes a modern frontend, API gateway, authentication and user services, VM lifecycle service, and a worker layer.
+The project follows Agile methodology with iterative sprint delivery and continuous integration practices.
+Key outcomes include improved maintainability, scalable architecture, and a real-time terminal workflow for VM interaction.
+Infrastructure and OpenNebula server operations are handled collaboratively with a dedicated RSI/server teammate.
+
+\chapter*{Résumé (French - optional if required)}
+(Optional) Add French summary if your institution requires it.
+
+\tableofcontents
+\listoffigures
+\listoftables
+\clearpage
+
+\pagenumbering{arabic}
+
+% ==========================
+\chapter{General Introduction}
+\section{Problem Statement}
+Organizations, laboratories, and student innovation teams increasingly depend on virtualized infrastructure to deliver practical software projects under constrained time and hardware resources.
+However, available VM administration solutions are frequently either too complex for daily academic use or too limited for modern development workflows.
+In many cases, users must switch between multiple interfaces (authentication panel, VM dashboard, SSH client, and monitoring pages), which reduces productivity and increases operational errors.
+
+The core problem addressed in this project is therefore the absence of a unified, developer-centered platform that combines VM lifecycle management, secure access, and interactive terminal capabilities in a single web experience.
+The project also targets the pedagogical objective of building a production-inspired architecture using microservices, containerization, and iterative Agile delivery.
+
+\section{Project Objectives}
+\begin{itemize}[leftmargin=*]
+    \item Build a full-stack platform for VM management and monitoring.
+    \item Provide secure authentication and role-aware access control.
+    \item Offer real-time terminal interaction for VM administration.
+    \item Integrate with virtualization infrastructure (OpenNebula).
+    \item Apply Agile methodology with sprint-based delivery.
+\end{itemize}
+
+From an engineering perspective, the project seeks to optimize three dimensions simultaneously: reliability, maintainability, and usability.
+Reliability is pursued through service separation and explicit error handling; maintainability through modular service boundaries and typed contracts; and usability through a responsive dashboard and streamlined terminal experience.
+The resulting platform is intended to remain extensible for future capabilities such as advanced observability, quota policies, and automated test pipelines.
+
+\section{Report Organization}
+This report is organized as follows.
+Chapter 2 presents the context and requirement analysis.
+Chapter 3 details the Agile project management framework, including backlog governance and sprint execution.
+Chapter 4 introduces the analysis and design artifacts, especially UML views.
+Chapter 5 explains implementation choices and technical realization.
+Chapter 6 reserves infrastructure-specific work to the RSI/server teammate and formalizes integration boundaries.
+Chapter 7 introduces the validation strategy while intentionally preserving pending test work.
+Finally, Chapter 8 discusses results, limitations, and future extensions.
+
+% ==========================
+\chapter{Context and Requirement Analysis}
+\section{Host Organization and Context}
+The project was conducted in an academic final-year context where functional delivery quality and engineering rigor are both evaluated.
+The team is composed of two contributors with complementary responsibilities: an application-development contributor (frontend/backend platform delivery) and an RSI/server contributor (infrastructure and OpenNebula operations).
+This split enables clearer accountability but introduces coordination dependencies, particularly for deployment-ready validation scenarios.
+
+Operationally, the project must satisfy both pedagogical constraints (documentation depth, UML completeness, reproducible development process) and practical constraints (limited timeline, infrastructure access windows, and progressive integration with server-side resources).
+
+\section{Functional Requirements}
+\begin{longtable}{p{0.2\textwidth} p{0.72\textwidth}}
+\toprule
+\textbf{ID} & \textbf{Requirement} \\
+\midrule
+FR1 & User registration and login (JWT-based authentication). \\
+FR2 & User profile and SSH key management. \\
+FR3 & VM provisioning, listing, and lifecycle actions (start/stop/restart/delete). \\
+FR4 & Access real-time VM terminal from web interface. \\
+FR5 & Role-aware dashboard and administration capabilities. \\
+\bottomrule
+\end{longtable}
+
+\section{Non-Functional Requirements}
+\begin{itemize}[leftmargin=*]
+    \item Security: secure auth, controlled CORS, validated inputs.
+    \item Performance: low-latency terminal streaming and responsive UI.
+    \item Scalability: microservices and worker separation.
+    \item Maintainability: modular codebase and clear service boundaries.
+    \item Reliability: robust error handling and service health checks.
+\end{itemize}
+
+For terminal responsiveness, the qualitative target is an interaction feel close to local shell usage, with smooth command echo and continuous output streaming.
+For maintainability, each service boundary should remain explicit and versionable, allowing incremental changes without full-system rewrites.
+For operational robustness, build reproducibility through containerized execution is considered mandatory.
+
+\section{Constraints and Assumptions}
+\begin{itemize}[leftmargin=*]
+    \item Infrastructure resources are managed by RSI/server side.
+    \item Integration with OpenNebula depends on server-level configuration.
+    \item Some advanced testing remains future work.
+\end{itemize}
+
+An important project assumption is that infrastructure APIs remain available and consistently configured across development and demonstration windows.
+Any deviation in OpenNebula templates, network exposure, or access policy can directly affect functional demonstrations, which is why infrastructure-related sections are explicitly delegated and documented in a separate teammate handoff.
+
+% ==========================
+\chapter{Methodology and Project Management (Agile/Scrum)}
+\section{Why Agile}
+Agile was selected to support iterative value delivery, rapid feedback, and progressive risk reduction.
+
+Given the progressive discovery nature of infrastructure integration, a sequential model (waterfall-style) would have increased late-stage risk.
+Agile practices allowed the team to prioritize end-user value first (authentication, user operations, VM actions), then stabilize complex integration flows (real-time terminal, infrastructure dependencies).
+Each sprint review was used as a decision point for backlog reprioritization.
+
+\section{Roles and Responsibilities}
+\begin{table}[H]
+\centering
+\begin{tabular}{p{0.25\textwidth} p{0.65\textwidth}}
+\toprule
+\textbf{Role} & \textbf{Responsibilities} \\
+\midrule
+Developer (You) & Frontend and backend service implementation, integration, API, UX, report writing. \\
+RSI/Server Teammate & Server provisioning, OpenNebula setup, network/security hardening at infra level, monitoring setup. \\
+Supervisor & Project guidance, milestone validation, quality oversight. \\
+\bottomrule
+\end{tabular}
+\caption{Team roles and responsibilities}
+\end{table}
+
+\section{Product Backlog}
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{0.08\textwidth} p{0.45\textwidth} p{0.15\textwidth} p{0.12\textwidth} p{0.12\textwidth}}
+\toprule
+\textbf{ID} & \textbf{User Story} & \textbf{Priority} & \textbf{Estimation} & \textbf{Status} \\
+\midrule
+PB1 & As a user, I want to register/login securely. & High & 5 SP & Done \\
+PB2 & As a user, I want to manage my profile and SSH keys. & High & 8 SP & Done \\
+PB3 & As a user, I want to create and control VMs. & High & 13 SP & Done \\
+PB4 & As a user, I want a real-time terminal for VM access. & High & 13 SP & In Progress \\
+PB5 & As admin, I want system visibility and health checks. & Medium & 8 SP & In Progress \\
+PB6 & As team, we want production-ready server integration. & High & 13 SP & RSI Side \\
+\bottomrule
+\end{tabular}
+\caption{Initial product backlog}
+\end{table}
+
+Backlog refinement was performed at least once per sprint.
+Stories were estimated using story points and reassessed whenever technical uncertainty changed.
+High-risk stories (terminal synchronization and infrastructure integration) were decomposed into smaller implementation tasks to reduce delivery uncertainty and improve review clarity.
+
+\section{Sprint Planning and Execution}
+\subsection{Sprint Breakdown}
+\begin{itemize}
+    \item Sprint 1: Core architecture and authentication.
+    \item Sprint 2: User/SSH key services and dashboard basics.
+    \item Sprint 3: VM service integration and lifecycle actions.
+    \item Sprint 4: Real-time terminal stabilization and hardening.
+    \item Sprint 5: Documentation, validation, and finalization.
+\end{itemize}
+
+Each sprint followed the same control cycle: planning (scope commitment), daily synchronization (impediment detection), review (demonstrable increments), and retrospective (process improvement actions).
+This closed feedback loop made it possible to continuously improve both technical quality and team collaboration practices.
+
+\subsection{Sprint Gantt (Template)}
+\begin{figure}[H]
+\centering
+\begin{ganttchart}[
+    vgrid, hgrid,
+    x unit=0.7cm,
+    y unit title=0.5cm,
+    y unit chart=0.6cm,
+    title label font=\bfseries\small,
+    bar label font=\small
+]{1}{15}
+\gantttitle{Project Timeline (Weeks)}{15} \\
+\gantttitlelist{1,...,15}{1} \\
+\ganttbar{Sprint 1}{1}{3} \\
+\ganttbar{Sprint 2}{4}{6} \\
+\ganttbar{Sprint 3}{7}{9} \\
+\ganttbar{Sprint 4}{10}{12} \\
+\ganttbar{Sprint 5}{13}{15}
+\end{ganttchart}
+\caption{Sprint timeline (update with your actual dates)}
+\end{figure}
+
+\section{Sprint Ceremonies}
+\textbf{Sprint Planning:} prioritized backlog items were transformed into executable tasks with explicit acceptance criteria.
+
+\textbf{Daily Synchronization:} blockers were captured early, especially those linked to service integration and environment availability.
+
+\textbf{Sprint Review:} each increment was demonstrated through working software artifacts (UI behavior, API actions, VM operations).
+
+\textbf{Retrospective:} process improvements were recorded and applied in the subsequent sprint (e.g., earlier interface contract checks, better risk visibility, and tighter integration checklists).
+
+\section{Sprint and Backlog Metrics}
+\begin{table}[H]
+\centering
+\begin{tabular}{p{0.25\textwidth} p{0.65\textwidth}}
+\toprule
+\textbf{Metric} & \textbf{Interpretation} \\
+\midrule
+Planned vs Delivered Story Points & Measures sprint predictability and commitment quality. \\
+Carry-over Stories & Indicates estimation accuracy and dependency pressure. \\
+Blocked Tasks per Sprint & Highlights external or infrastructure bottlenecks. \\
+Defect Notes per Increment & Tracks quality trends and technical debt signals. \\
+\bottomrule
+\end{tabular}
+\caption{Agile monitoring indicators used in this project}
+\end{table}
+
+% ==========================
+\chapter{System Analysis and Design}
+\section{Global Vision}
+\safeimage{figures/architecture-overview.png}{Global architecture overview}{fig:global-arch}
+
+The platform is organized around a gateway-centric interaction model.
+Frontend clients communicate with the gateway, which routes requests to specialized backend services.
+This design improves separation of concerns while preserving a unified entry point for authentication, authorization, and observability.
+
+\section{UML Use Case Diagram}
+\safeimage{figures/uml-usecase.png}{Use case diagram for platform actors and interactions}{fig:usecase}
+
+\section{Domain/Class Diagram}
+\safeimage{figures/uml-class.png}{Class/domain model diagram}{fig:class}
+
+\section{Component Diagram}
+\safeimage{figures/uml-component.png}{Component diagram (frontend, gateway, services, worker, DB)}{fig:component}
+
+\section{Sequence Diagrams}
+\safeimage{figures/uml-seq-auth.png}{Authentication flow sequence diagram}{fig:seq-auth}
+\safeimage{figures/uml-seq-vm-lifecycle.png}{VM lifecycle sequence diagram}{fig:seq-vm}
+\safeimage{figures/uml-seq-terminal.png}{Real-time terminal interaction sequence diagram}{fig:seq-terminal}
+
+\section{Deployment Diagram}
+\safeimage{figures/uml-deployment.png}{Deployment diagram with infrastructure nodes}{fig:deployment}
+\serverowned{Add precise server topology: OpenNebula hosts, hypervisors, network segmentation, firewall placement, reverse proxy, TLS termination, and monitoring agents.}
+
+The deployment view distinguishes application-plane components (frontend and microservices) from infrastructure-plane components (OpenNebula and host-level controls).
+This distinction is fundamental to clarify ownership boundaries between development and RSI/server activities.
+
+% ==========================
+\chapter{Implementation}
+\section{Technology Stack}
+\begin{table}[H]
+\centering
+\begin{tabular}{p{0.3\textwidth} p{0.6\textwidth}}
+\toprule
+\textbf{Layer} & \textbf{Technology} \\
+\midrule
+Frontend & Next.js + TypeScript + Tailwind CSS \\
+Backend API & NestJS microservices (Gateway, Auth, User, VM) \\
+Data & Prisma + relational database \\
+Async/Workers & Python worker modules \\
+Deployment & Docker + Docker Compose \\
+Virtualization Integration & OpenNebula (RSI/server-managed) \\
+\bottomrule
+\end{tabular}
+\caption{Technology stack}
+\end{table}
+
+The stack was selected to maximize developer productivity while preserving production-like patterns.
+Next.js and TypeScript support robust frontend iteration, while NestJS enables modular backend services with clear architectural conventions.
+Prisma contributes schema-driven consistency between domain model and persistence.
+
+\section{Frontend Highlights}
+The frontend follows a route-structured design with dedicated areas for authentication, dashboard operations, VM management, profile settings, and SSH key administration.
+Particular attention was given to terminal interaction ergonomics (clear output rendering, command flow continuity, and user feedback on connection state).
+The UI was implemented to keep operational actions discoverable and reduce context switching.
+
+\section{Backend Highlights}
+\begin{itemize}
+    \item Gateway service for routing/proxy.
+    \item Auth service with JWT and guards.
+    \item User service for profile and SSH keys.
+    \item VM service for lifecycle management and terminal channeling.
+    \item Worker service for automation/background updates.
+\end{itemize}
+
+At implementation level, service interfaces were intentionally kept explicit to reduce coupling.
+Authentication and authorization concerns were isolated from VM orchestration logic.
+This boundary discipline simplifies future evolution, including policy enrichment and audit extension.
+
+\section{Data Model Alignment}
+The domain model is centered around the \texttt{User} entity and extends to \texttt{SshKey}, \texttt{VirtualMachine}, \texttt{Plan}, \texttt{UserQuota}, \texttt{RefreshToken}, \texttt{Payment}, and \texttt{Notification}.
+Entity relations were designed to support both operational workflows (provisioning, terminal access) and account-level governance (quota and billing evolution).
+
+\section{Security and Hardening}
+\begin{itemize}
+    \item Input validation and DTO constraints.
+    \item Auth guards and token checks.
+    \item Error handling strategy and secure defaults.
+    \item CORS and environment variable governance.
+\end{itemize}
+
+Hardening activities focused on practical risk reduction rather than theoretical checklists.
+The selected controls prioritize secure defaults, constrained request surfaces, and failure behavior clarity.
+This approach keeps the platform evolvable while improving baseline resilience.
+
+% ==========================
+\chapter{Infrastructure and OpenNebula Integration}
+\section{Integration Objectives}
+Describe what the platform expects from infrastructure APIs and services.
+
+\section{Server Architecture}
+\serverowned{Provide full server architecture details:
+\begin{itemize}
+    \item OpenNebula cluster topology.
+    \item VM template lifecycle and image pipeline.
+    \item Network/VLAN mapping and access model.
+    \item Storage configuration and backup policy.
+\end{itemize}
+}
+
+\section{Provisioning and Operations}
+\serverowned{Explain deployment scripts, systemd/services, reverse proxy configs, SSL certificates, secrets management, and recovery procedures.}
+
+\section{Monitoring and Incident Handling}
+\serverowned{Document logs, metrics, alert rules, incident response process, and observed issues/resolutions.}
+
+% ==========================
+\chapter{Validation and Testing}
+\textbf{Important note:} This chapter is intentionally incomplete and will be finalized later.
+
+\section{Current Validation Status}
+At this stage, validation mainly covers implemented build and lint workflows for relevant project modules, plus functional manual checks for key user journeys.
+Comprehensive automated and non-functional campaigns are intentionally postponed and will be completed in a subsequent iteration.
+
+\section{Planned Test Strategy (TO DO)}
+\begin{itemize}
+    \item Unit tests by service.
+    \item API integration tests.
+    \item Terminal real-time behavior tests.
+    \item Security and penetration checks.
+    \item Performance benchmarks.
+\end{itemize}
+
+The final strategy will include traceability from requirement IDs to test cases, with explicit pass/fail evidence and defect references.
+For terminal validation, special attention will be given to stream continuity, reconnection handling, and command latency perception.
+
+\section{Test Cases Table (Template)}
+\begin{longtable}{p{0.12\textwidth} p{0.45\textwidth} p{0.15\textwidth} p{0.18\textwidth}}
+\toprule
+\textbf{ID} & \textbf{Scenario} & \textbf{Expected} & \textbf{Result} \\
+\midrule
+T1 & Login with valid credentials & JWT issued & TO DO \\
+T2 & Add SSH key & Key stored safely & TO DO \\
+T3 & Create VM & VM provisioned & TO DO \\
+T4 & Open terminal session & Interactive shell works & TO DO \\
+\bottomrule
+\end{longtable}
+
+% ==========================
+\chapter{Discussion and Future Work}
+\section{Achievements}
+The project successfully delivered a coherent multi-service platform with an integrated user workflow for authentication, account management, VM lifecycle actions, and terminal interaction.
+Architecturally, the separation into dedicated services improved clarity of responsibilities and supports long-term extension.
+
+\section{Limitations}
+Current limitations include incomplete automated testing coverage and dependence on infrastructure readiness for full end-to-end production-like validation.
+Additionally, advanced observability and policy automation remain partially defined and require dedicated future iterations.
+
+\section{Future Improvements}
+\begin{itemize}
+    \item Full automated test pipeline.
+    \item Enhanced observability dashboard.
+    \item Multi-tenant policy and quota management.
+    \item AI-assisted incident diagnostics.
+\end{itemize}
+
+% ==========================
+\chapter{General Conclusion}
+This project delivered a modular and scalable VM management platform aligned with Agile practices.
+The implemented architecture separates concerns across services and supports progressive hardening.
+Further work focuses on complete test coverage and deeper production infrastructure optimization.
+
+Beyond feature delivery, the project demonstrates a structured engineering process where architecture, implementation, and project management artifacts remain consistent.
+This coherence is central to PFE evaluation because it links technical outputs to methodical execution and measurable progress.
+
+% ---------- References ----------
+\begin{thebibliography}{99}
+\bibitem{nextjs} Next.js Documentation. \url{https://nextjs.org/docs}
+\bibitem{nestjs} NestJS Documentation. \url{https://docs.nestjs.com}
+\bibitem{prisma} Prisma Documentation. \url{https://www.prisma.io/docs}
+\bibitem{docker} Docker Documentation. \url{https://docs.docker.com}
+\bibitem{opennebula} OpenNebula Documentation. \url{https://docs.opennebula.io}
+\bibitem{scrumguide} The Scrum Guide. \url{https://scrumguides.org}
+\end{thebibliography}
+
+\appendix
+\chapter{Appendix A: Sprint Retrospective Templates}
+\section*{What went well}
+\section*{What did not go well}
+\section*{Action items}
+
+\chapter{Appendix B: API Endpoints (Template)}
+List your most important endpoints by service.
+
+\end{document}

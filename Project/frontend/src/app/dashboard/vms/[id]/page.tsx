@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import api from "@/lib/api";
+import { getErrorMessage } from "@/lib/error";
 import type { VirtualMachine } from "@/types";
 import { useVmSocket } from "@/hooks/useVmSocket";
 
@@ -68,7 +69,7 @@ export default function VmDetailPage() {
             status:    update.status as VirtualMachine["status"],
             ipAddress: update.ipAddress ?? prev.ipAddress,
             oneVmId:   update.oneVmId   ?? prev.oneVmId,
-            sshHost:   update.sshHost   ?? (prev as any).sshHost,
+            sshHost:   update.sshHost   ?? prev.sshHost,
             updatedAt: new Date().toISOString(),
           }
         : prev,
@@ -80,8 +81,8 @@ export default function VmDetailPage() {
     try {
       await api.post(`/vms/${id}/action`, { action });
       await fetchVm();
-    } catch (err: any) {
-      setError(err.response?.data?.message || `Failed to ${action} VM`);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, `Failed to ${action} VM`));
     } finally {
       setActionLoading("");
     }
@@ -98,8 +99,8 @@ export default function VmDetailPage() {
     try {
       await api.delete(`/vms/${id}`);
       router.push("/dashboard/vms");
-    } catch (err: any) {
-      setError(err.response?.data?.message || "Failed to delete VM");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to delete VM"));
       setActionLoading("");
     }
   };

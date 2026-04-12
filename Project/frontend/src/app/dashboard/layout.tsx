@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import Cookies from "js-cookie";
 import { useAuth } from "@/lib/auth";
+import { clearAuthCookies, isRememberMeEnabled } from "@/lib/session";
 import clsx from "clsx";
+import AssistantChat from "@/components/assistant/AssistantChat";
 
 const navItems = [
   {
@@ -72,6 +75,24 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    label: "AI Assistant",
+    href: "/dashboard/assistant",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      >
+        <rect x="4" y="5" width="16" height="12" rx="2" />
+        <path d="M9 10h6M12 17v3" />
+        <circle cx="8" cy="11" r="1" />
+        <circle cx="16" cy="11" r="1" />
+      </svg>
+    ),
+  },
 ];
 
 const adminItems = [
@@ -103,6 +124,8 @@ export default function DashboardLayout({
   const router = useRouter();
   const { user, isLoading, isAuthenticated, fetchUser, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const isAssistantRoute = pathname?.startsWith("/dashboard/assistant");
 
   useEffect(() => {
     fetchUser();
@@ -110,9 +133,49 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      router.push("/login");
+      router.replace("/login");
     }
   }, [isLoading, isAuthenticated, router]);
+
+  useEffect(() => {
+    const navEntries =
+      typeof performance !== "undefined"
+        ? performance.getEntriesByType("navigation")
+        : [];
+
+    const navigationType =
+      navEntries.length > 0
+        ? (navEntries[0] as PerformanceNavigationTiming).type
+        : "navigate";
+
+    if (navigationType === "reload" && !isRememberMeEnabled()) {
+      clearAuthCookies();
+      router.replace("/login");
+      return;
+    }
+
+    const enforceCookieAuth = () => {
+      const token = Cookies.get("accessToken");
+      if (!token) {
+        router.replace("/login");
+      }
+    };
+
+    enforceCookieAuth();
+    window.addEventListener("pageshow", enforceCookieAuth);
+    window.addEventListener("popstate", enforceCookieAuth);
+
+    return () => {
+      window.removeEventListener("pageshow", enforceCookieAuth);
+      window.removeEventListener("popstate", enforceCookieAuth);
+    };
+  }, [router]);
+
+  useEffect(() => {
+    if (isAssistantRoute && assistantOpen) {
+      setAssistantOpen(false);
+    }
+  }, [isAssistantRoute, assistantOpen]);
 
   if (isLoading) {
     return (
@@ -150,7 +213,7 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     await logout();
-    router.push("/login");
+    router.replace("/login");
   };
 
   return (
@@ -282,6 +345,37 @@ export default function DashboardLayout({
 
         {/* Page content */}
         <main className="flex-1 p-4 lg:p-8 overflow-auto">{children}</main>
+
+        {/* Floating AI Assistant */}
+        {!isAssistantRoute && assistantOpen && (
+          <div className="fixed bottom-24 right-4 lg:right-8 z-50 w-[calc(100vw-2rem)] max-w-[420px]">
+            <AssistantChat
+              mode="compact"
+              onClose={() => setAssistantOpen(false)}
+            />
+          </div>
+        )}
+
+        {!isAssistantRoute && (
+          <button
+            onClick={() => setAssistantOpen((prev) => !prev)}
+            className="fixed bottom-6 right-4 lg:right-8 z-50 cyber-btn-primary !px-4 !py-3 shadow-glow inline-flex items-center gap-2"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+            >
+              <rect x="4" y="5" width="16" height="12" rx="2" />
+              <path d="M9 10h6M12 17v3" />
+              <circle cx="8" cy="11" r="1" />
+              <circle cx="16" cy="11" r="1" />
+            </svg>
+            <span className="hidden sm:inline">AI Assistant</span>
+          </button>
+        )}
       </div>
     </div>
   );

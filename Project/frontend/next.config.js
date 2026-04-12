@@ -1,8 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001',
+  // Allow self-signed certificates in development / internal fetches
+  // (Next.js server-side fetch to the gateway inside Docker).
+  async rewrites() {
+    return [];
   },
 };
 

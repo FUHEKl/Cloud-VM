@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import api from "@/lib/api";
 import type { User, UserStats } from "@/types";
 
@@ -17,7 +17,7 @@ export default function AdminUsersPage() {
   const [total, setTotal] = useState(0);
   const limit = 10;
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       const [usersRes, statsRes] = await Promise.all([
         api.get(`/users?page=${page}&limit=${limit}&search=${search}`),
@@ -32,11 +32,11 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, search]);
 
   useEffect(() => {
     loadUsers();
-  }, [page, search]);
+  }, [loadUsers]);
 
   const toggleActive = async (userId: string, isActive: boolean) => {
     try {

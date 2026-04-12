@@ -19,6 +19,7 @@ def update_vm_status(
     ip_address: str = None,
     one_vm_id: int = None,
     ssh_host: str = None,
+    ssh_username: str = None,
 ) -> None:
     """
     Update the virtual_machines table with the latest VM status and metadata.
@@ -44,6 +45,10 @@ def update_vm_status(
     if ssh_host is not None:
         set_clauses.append('"sshHost" = %s')
         params.append(ssh_host)
+
+    if ssh_username is not None:
+        set_clauses.append('"sshUsername" = %s')
+        params.append(ssh_username)
 
     params.append(vm_id)
 
@@ -120,6 +125,25 @@ def get_user_ssh_keys(user_id: str) -> list:
     except Exception as e:
         logger.error(f"Error fetching SSH keys for user {user_id}: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def delete_vm_record(vm_id: str) -> None:
+    """Hard delete a VM row from virtual_machines."""
+    conn = None
+    try:
+        conn = _get_connection()
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM virtual_machines WHERE id = %s', (vm_id,))
+        conn.commit()
+        logger.info(f"Deleted VM {vm_id} from database")
+    except Exception as e:
+        logger.error(f"Error deleting VM {vm_id} from database: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
+        raise
     finally:
         if conn:
             conn.close()

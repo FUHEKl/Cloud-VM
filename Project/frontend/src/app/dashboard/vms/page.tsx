@@ -1,43 +1,85 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import api from "@/lib/api";
 import type { VirtualMachine } from "@/types";
 import { useVmSocket } from "@/hooks/useVmSocket";
+
+type VmAction = "start" | "stop" | "delete";
+
+const STATUS_BADGE: Record<string, string> = {
+  RUNNING: "cyber-badge-green",
+  STOPPED: "cyber-badge-red",
+  PENDING: "cyber-badge-orange",
+  PROLOG: "cyber-badge-orange",
+  BOOT: "cyber-badge-orange",
+  ERROR: "cyber-badge-red",
+  SUSPENDED: "cyber-badge-orange",
+  DELETED: "cyber-badge-red",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  RUNNING: "Running",
+  STOPPED: "Stopped",
+  PENDING: "Pending",
+  PROLOG: "Preparing…",
+  BOOT: "Booting…",
+  MIGRATE: "Migrating…",
+  SHUTDOWN: "Shutting down…",
+  ERROR: "Error",
+  DELETED: "Deleted",
+};
+
+function formatRam(ramMb: number): string {
+  return ramMb >= 1024 ? `${ramMb / 1024}GB` : `${ramMb}MB`;
+}
 
 export default function VmsListPage() {
   const [vms, setVms] = useState<VirtualMachine[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [listError, setListError] = useState("");
 
-  const loadVms = async () => {
+  const loadVms = useCallback(async () => {
     try {
+      setListError("");
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       if (statusFilter) params.set("status", statusFilter);
-      const { data } = await api.get(`/vms?${params}`);
+      const query = params.toString();
+      const { data } = await api.get(query ? `/vms?${query}` : "/vms");
       setVms(Array.isArray(data) ? data : data.data || []);
     } catch {
-      // silent
+      setListError("Failed to load VMs. Please refresh the page.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [search, statusFilter]);
 
   useEffect(() => {
     loadVms();
-  }, [search, statusFilter]);
+  }, [loadVms]);
 
   // Real-time VM status updates via WebSocket
   useVmSocket((update) => {
     setVms((prev) => {
-      // If the VM was deleted, remove it from the list
+      // VM deleted → remove from list
       if (update.status === "DELETED") {
         return prev.filter((vm) => vm.id !== update.vmId);
       }
-      // Otherwise update it in-place
+
+      const exists = prev.some((vm) => vm.id === update.vmId);
+
+      if (!exists) {
+        // This is a VM we don't have yet (e.g. just created, or race with
+        // initial HTTP fetch).  Reload the whole list so it appears.
+        loadVms();
+        return prev;
+      }
+
+      // Update the VM in-place
       return prev.map((vm) =>
         vm.id === update.vmId
           ? {
@@ -50,7 +92,7 @@ export default function VmsListPage() {
     });
   });
 
-  const handleAction = async (vmId: string, action: string) => {
+  const handleAction = async (vmId: string, action: VmAction) => {
     if (action === "delete" && !confirm("Delete this VM?")) return;
     try {
       if (action === "delete") {
@@ -62,29 +104,6 @@ export default function VmsListPage() {
     } catch {
       // silent
     }
-  };
-
-  const statusBadge: Record<string, string> = {
-    RUNNING:  "cyber-badge-green",
-    STOPPED:  "cyber-badge-red",
-    PENDING:  "cyber-badge-orange",
-    PROLOG:   "cyber-badge-orange",
-    BOOT:     "cyber-badge-orange",
-    ERROR:    "cyber-badge-red",
-    SUSPENDED:"cyber-badge-orange",
-    DELETED:  "cyber-badge-red",
-  };
-
-  const statusLabel: Record<string, string> = {
-    RUNNING:  "Running",
-    STOPPED:  "Stopped",
-    PENDING:  "Pending",
-    PROLOG:   "Preparing…",
-    BOOT:     "Booting…",
-    MIGRATE:  "Migrating…",
-    SHUTDOWN: "Shutting down…",
-    ERROR:    "Error",
-    DELETED:  "Deleted",
   };
 
   return (
@@ -138,6 +157,17 @@ export default function VmsListPage() {
       </div>
 
       {/* VMs Grid */}
+      {listError && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm flex items-center justify-between">
+          <span>{listError}</span>
+          <button
+            onClick={loadVms}
+            className="ml-4 text-cyber-red underline hover:no-underline text-xs"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {loading ? (
         <div className="text-center py-12 text-cyber-text-dim">Loading...</div>
       ) : vms.length === 0 ? (
@@ -175,8 +205,8 @@ export default function VmsListPage() {
                 >
                   {vm.name}
                 </Link>
-                <span className={statusBadge[vm.status] || "cyber-badge"}>
-                  {statusLabel[vm.status] ?? vm.status}
+                <span className={STATUS_BADGE[vm.status] || "cyber-badge"}>
+                  {STATUS_LABEL[vm.status] ?? vm.status}
                 </span>
               </div>
 
@@ -194,11 +224,7 @@ export default function VmsListPage() {
                 <div className="flex justify-between">
                   <span>Resources</span>
                   <span className="text-cyber-text">
-                    {vm.cpu} vCPU ·{" "}
-                    {vm.ramMb >= 1024
-                      ? `${vm.ramMb / 1024}GB`
-                      : `${vm.ramMb}MB`}{" "}
-                    · {vm.diskGb}GB
+                    {vm.cpu} vCPU · {formatRam(vm.ramMb)} · {vm.diskGb}GB
                   </span>
                 </div>
               </div>

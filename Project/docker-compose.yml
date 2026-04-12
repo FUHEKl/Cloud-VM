@@ -35,6 +35,20 @@ services:
       - "8222:8222"
     command: ["--js"]
 
+  # ── Nginx reverse-proxy (HTTPS :443) ─────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - gateway
+      - frontend
+
   # ── API Gateway ──────────────────────────────────
   gateway:
     build:
@@ -42,19 +56,24 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${GATEWAY_PORT:-3001}:3001"
+      - "3001:3001"
+    expose:
+      - "3001"
     environment:
       - AUTH_SERVICE_URL=http://auth:3002
       - USER_SERVICE_URL=http://user:3003
       - VM_SERVICE_URL=http://vm:3004
+      - AI_SERVICE_URL=http://ai:3006
       - PAYMENT_SERVICE_URL=http://payment:3005
       - JWT_SECRET=${JWT_SECRET}
       - REDIS_HOST=redis
+      - CORS_ORIGIN=${CORS_ORIGIN}
     depends_on:
       - redis
       - auth
       - user
       - vm
+      - ai
 
   # ── Auth Service ─────────────────────────────────
   auth:
@@ -62,8 +81,8 @@ services:
       context: ./services/auth
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "${AUTH_PORT:-3002}:3002"
+    expose:
+      - "3002"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
       - JWT_SECRET=${JWT_SECRET}
@@ -80,8 +99,8 @@ services:
       context: ./services/user
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "${USER_PORT:-3003}:3003"
+    expose:
+      - "3003"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
       - JWT_SECRET=${JWT_SECRET}
@@ -95,13 +114,14 @@ services:
       context: ./services/vm
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "${VM_PORT:-3004}:3004"
+    expose:
+      - "3004"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
       - JWT_SECRET=${JWT_SECRET}
       - NATS_URL=nats://nats:4222
       - REDIS_HOST=redis
+      - CORS_ORIGIN=${CORS_ORIGIN}
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,6 +129,50 @@ services:
         condition: service_started
       redis:
         condition: service_started
+
+  # ── AI Service ───────────────────────────────────
+  ai:
+    build:
+      context: ./services/ai
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3006"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ORIGIN=${CORS_ORIGIN}
+      - VM_SERVICE_URL=http://vm:3004
+      - USER_SERVICE_URL=http://user:3003
+      - AI_RATE_LIMIT_PER_MIN=${AI_RATE_LIMIT_PER_MIN:-20}
+      - AI_ACTION_CONFIRM_SECRET=${AI_ACTION_CONFIRM_SECRET:-}
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - AI_FALLBACK_ENABLED=${AI_FALLBACK_ENABLED:-true}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
+      - OLLAMA_VISION_MODEL=${OLLAMA_VISION_MODEL:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-meta-llama/llama-3.1-8b-instruct:free}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Ollama (optional local model) ───────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    expose:
+      - "11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ── Python Worker ────────────────────────────────
   worker:
@@ -122,7 +186,11 @@ services:
       - ONE_XMLRPC=${ONE_XMLRPC}
       - ONE_USERNAME=${ONE_USERNAME}
       - ONE_PASSWORD=${ONE_PASSWORD}
+      - ONE_IP_OFFSET=${ONE_IP_OFFSET:-0}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+      - EXTRA_SSH_KEYS_FILE=/app/extra_ssh_keys.txt
+    volumes:
+      - ./worker/extra_ssh_keys.txt:/app/extra_ssh_keys.txt:ro
     depends_on:
       nats:
         condition: service_started
@@ -136,12 +204,16 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "3000:3000"
+    expose:
+      - "3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:${GATEWAY_PORT:-3001}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - NEXT_PUBLIC_VM_WS_URL=${NEXT_PUBLIC_VM_WS_URL}
     depends_on:
       - gateway
 
 volumes:
   pgdata:
   redisdata:
+  ollama_data:

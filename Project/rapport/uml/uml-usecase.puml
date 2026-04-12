@@ -1,0 +1,19 @@
+@startuml
+left to right direction
+actor User
+actor Admin
+rectangle "Cloud VM Platform" {
+  usecase "Register/Login" as UC1
+  usecase "Manage Profile" as UC2
+  usecase "Manage SSH Keys" as UC3
+  usecase "Create/Start/Stop VM" as UC4
+  usecase "Access VM Terminal" as UC5
+  usecase "View Health & Logs" as UC6
+}
+User --> UC1
+User --> UC2
+User --> UC3
+User --> UC4
+User --> UC5
+Admin --> UC6
+@enduml

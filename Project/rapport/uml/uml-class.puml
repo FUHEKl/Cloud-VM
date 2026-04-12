@@ -1,0 +1,112 @@
+@startuml
+hide circle
+skinparam classAttributeIconSize 0
+
+class User {
+  +id: UUID
+  +email: string
+  +password: string
+  +firstName: string
+  +lastName: string
+  +role: Role
+  +isActive: boolean
+  +createdAt: datetime
+  +updatedAt: datetime
+}
+
+class RefreshToken {
+  +id: UUID
+  +token: string
+  +expiresAt: datetime
+  +createdAt: datetime
+}
+
+class SshKey {
+  +id: UUID
+  +name: string
+  +publicKey: text
+  +fingerprint: string
+  +userId: UUID
+  +createdAt: datetime
+}
+
+class VirtualMachine {
+  +id: UUID
+  +oneVmId: int
+  +name: string
+  +status: VMStatus
+  +cpu: int
+  +ramMb: int
+  +diskGb: int
+  +ipAddress: string
+  +osTemplate: string
+  +userId: UUID
+  +planId: UUID
+  +sshHost: string
+  +sshPort: int
+  +sshUsername: string
+  +createdAt: datetime
+  +updatedAt: datetime
+}
+
+class Plan {
+  +id: UUID
+  +name: string
+  +cpu: int
+  +ramMb: int
+  +diskGb: int
+  +priceMonthly: float
+  +isActive: boolean
+  +createdAt: datetime
+}
+
+class UserQuota {
+  +id: UUID
+  +userId: UUID
+  +maxVms: int
+  +maxCpu: int
+  +maxRamMb: int
+  +maxDiskGb: int
+}
+
+class Payment {
+  +id: UUID
+  +userId: UUID
+  +amount: float
+  +currency: string
+  +status: string
+  +method: string
+  +createdAt: datetime
+}
+
+class Notification {
+  +id: UUID
+  +userId: UUID
+  +title: string
+  +message: string
+  +isRead: boolean
+  +createdAt: datetime
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum VMStatus {
+  PENDING
+  RUNNING
+  STOPPED
+  SUSPENDED
+  ERROR
+  DELETED
+}
+
+User "1" -- "0..*" RefreshToken : owns >
+User "1" -- "0..*" SshKey : owns >
+User "1" -- "0..*" VirtualMachine : creates >
+User "1" -- "0..1" UserQuota : has >
+User "1" -- "0..*" Payment : pays >
+User "1" -- "0..*" Notification : receives >
+Plan "1" -- "0..*" VirtualMachine : selected by >
+@enduml

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { getErrorMessage } from "@/lib/error";
 import type { VmStats, VirtualMachine } from "@/types";
 
 export default function DashboardPage() {
@@ -17,28 +18,51 @@ export default function DashboardPage() {
   });
   const [recentVms, setRecentVms] = useState<VirtualMachine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string>("");
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [statsRes, vmsRes] = await Promise.all([
-          api.get("/vms/stats"),
-          api.get("/vms?limit=5"),
-        ]);
-        setVmStats(statsRes.data);
-        setRecentVms(
-          Array.isArray(vmsRes.data)
-            ? vmsRes.data.slice(0, 5)
-            : vmsRes.data.data?.slice(0, 5) || [],
+  const load = useCallback(async () => {
+    setLoadError("");
+    setLoading(true);
+
+    const [statsRes, vmsRes] = await Promise.allSettled([
+      api.get("/vms/stats"),
+      api.get("/vms?limit=5"),
+    ]);
+
+    if (statsRes.status === "fulfilled") {
+      setVmStats(statsRes.value.data);
+    }
+
+    if (vmsRes.status === "fulfilled") {
+      const vmData = vmsRes.value.data;
+      setRecentVms(
+        Array.isArray(vmData)
+          ? vmData.slice(0, 5)
+          : vmData.data?.slice(0, 5) || [],
+      );
+    }
+
+    if (statsRes.status === "rejected" || vmsRes.status === "rejected") {
+      if (statsRes.status === "rejected" && vmsRes.status === "rejected") {
+        setLoadError(
+          getErrorMessage(
+            statsRes.reason,
+            "Failed to load dashboard data. Please try again.",
+          ),
         );
-      } catch {
-        // silently fail
-      } finally {
-        setLoading(false);
+      } else {
+        setLoadError(
+          "Some dashboard data could not be loaded. Please try again.",
+        );
       }
     }
-    load();
+
+    setLoading(false);
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const statusColor: Record<string, string> = {
     RUNNING: "cyber-badge-green",
@@ -134,6 +158,18 @@ export default function DashboardPage() {
         <p className="text-cyber-text-dim mt-1">
           Here&apos;s an overview of your cloud infrastructure
         </p>
+
+        {loadError && (
+          <div className="mt-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm flex items-center justify-between gap-4">
+            <span>{loadError}</span>
+            <button
+              onClick={load}
+              className="text-cyber-red underline hover:no-underline text-xs"
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Stats Grid */}

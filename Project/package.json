@@ -10,6 +10,7 @@
     "dev:auth": "cd services/auth && npm run start:dev",
     "dev:user": "cd services/user && npm run start:dev",
     "dev:vm": "cd services/vm && npm run start:dev",
+    "dev:ai": "cd services/ai && npm run start:dev",
     "dev:payment": "cd services/payment && npm run start:dev",
     "build": "docker-compose build",
     "start": "docker-compose up",

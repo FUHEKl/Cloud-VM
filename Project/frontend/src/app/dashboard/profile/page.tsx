@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import api from "@/lib/api";
+import { getErrorMessage } from "@/lib/error";
 
 export default function ProfilePage() {
   const { user, fetchUser } = useAuth();
@@ -29,10 +30,10 @@ export default function ProfilePage() {
       await api.patch("/users/profile", profile);
       await fetchUser();
       setProfileMsg({ type: "success", text: "Profile updated successfully" });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setProfileMsg({
         type: "error",
-        text: err.response?.data?.message || "Failed to update profile",
+        text: getErrorMessage(err, "Failed to update profile"),
       });
     } finally {
       setSaving(false);
@@ -57,10 +58,10 @@ export default function ProfilePage() {
         type: "success",
         text: "Password changed successfully",
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setPasswordMsg({
         type: "error",
-        text: err.response?.data?.message || "Failed to change password",
+        text: getErrorMessage(err, "Failed to change password"),
       });
     } finally {
       setChangingPw(false);

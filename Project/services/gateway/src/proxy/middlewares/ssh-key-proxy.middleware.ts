@@ -1,26 +1,14 @@
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
-import { createProxyMiddleware } from "http-proxy-middleware";
-import { forwardParsedBody } from "./proxy-body.util";
+import { createJsonApiProxy } from "./create-json-api-proxy.util";
 
 @Injectable()
 export class SshKeyProxyMiddleware implements NestMiddleware {
-  private proxy = createProxyMiddleware({
+  private proxy = createJsonApiProxy({
     target: process.env.USER_SERVICE_URL || "http://localhost:3003",
-    changeOrigin: true,
-    pathRewrite: {
-      "^/api/ssh-keys": "/ssh-keys",
-    },
-    onProxyReq: (proxyReq, req) => {
-      forwardParsedBody(proxyReq, req as Request);
-    },
-    onError: (err, req, res) => {
-      console.error("SSH Key proxy error:", err.message);
-      (res as Response).status(502).json({
-        statusCode: 502,
-        message: "User service unavailable",
-      });
-    },
+    pathRewrite: { "^/api/ssh-keys": "/ssh-keys" },
+    errorLabel: "SSH Key",
+    unavailableMessage: "User service unavailable",
   });
 
   use(req: Request, res: Response, next: NextFunction) {

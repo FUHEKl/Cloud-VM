@@ -1,0 +1,16 @@
+@startuml
+actor User
+participant Frontend
+participant Gateway
+participant AuthService
+database DB
+
+User -> Frontend: Submit credentials
+Frontend -> Gateway: POST /auth/login
+Gateway -> AuthService: Validate request
+AuthService -> DB: Verify user
+DB --> AuthService: User + hash
+AuthService --> Gateway: JWT token
+Gateway --> Frontend: 200 + token
+Frontend --> User: Login success
+@enduml

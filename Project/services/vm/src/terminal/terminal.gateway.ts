@@ -11,15 +11,25 @@ import { Server, Socket } from "socket.io";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { Client, ClientChannel } from "ssh2";
+import { TerminalTelemetryService } from "./terminal-telemetry.service";
 
 interface SshSession {
   sshClient: Client;
   stream: ClientChannel;
 }
 
+const terminalCorsOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 @WebSocketGateway({
-  cors: { origin: "*" },
+  cors: {
+    origin: terminalCorsOrigins,
+    credentials: true,
+  },
   namespace: "/terminal",
+  path: "/terminal/socket.io",
 })
 export class TerminalGateway implements OnGatewayDisconnect {
   @WebSocketServer()
@@ -27,14 +37,31 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
   private readonly logger = new Logger(TerminalGateway.name);
   private readonly sessions = new Map<string, SshSession>();
+  private readonly inputWindowStats = new Map<
+    string,
+    { windowStartMs: number; bytesInWindow: number }
+  >();
+  private readonly maxInputBytesPerEvent = 4096;
+  private readonly maxInputBytesPerSecond = 32768;
+  private readonly sshConnectTimeoutMs = Math.max(
+    5000,
+    Number(process.env.TERMINAL_SSH_CONNECT_TIMEOUT_MS ?? 20000),
+  );
 
   constructor(
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
-  ) {}
+    private readonly telemetry: TerminalTelemetryService,
+  ) {
+    if (!process.env.JWT_SECRET) {
+      this.logger.error("JWT_SECRET is required for terminal authentication");
+      throw new Error("JWT_SECRET is required");
+    }
+  }
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
+    this.telemetry.markDisconnect(client.id, "socket_disconnected");
     this.cleanupSession(client.id);
   }
 
@@ -42,15 +69,36 @@ export class TerminalGateway implements OnGatewayDisconnect {
   async handleConnectSsh(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    payload: { vmId: string; password?: string; username?: string },
+    payload: { vmId: string; password?: string; username?: string; privateKey?: string },
   ) {
     try {
+      if (!payload?.vmId || typeof payload.vmId !== "string") {
+        this.telemetry.markConnectDenied(client.id, "invalid_vm_identifier");
+        client.emit("error", { message: "Invalid VM identifier" });
+        return;
+      }
+
+      if (payload.password && payload.password.length > 256) {
+        this.telemetry.markConnectDenied(client.id, "password_too_long", payload.vmId);
+        client.emit("error", { message: "Password is too long" });
+        return;
+      }
+
+      if (payload.privateKey && payload.privateKey.length > 32768) {
+        this.telemetry.markConnectDenied(client.id, "private_key_too_large", payload.vmId);
+        client.emit("error", { message: "Private key is too large" });
+        return;
+      }
+
+      this.cleanupSession(client.id);
+
       // Verify JWT from handshake
       const token =
         client.handshake.auth?.token ||
         client.handshake.headers?.authorization?.replace("Bearer ", "");
 
       if (!token) {
+        this.telemetry.markConnectDenied(client.id, "missing_token", payload.vmId);
         client.emit("error", { message: "Authentication required" });
         client.disconnect();
         return;
@@ -60,26 +108,32 @@ export class TerminalGateway implements OnGatewayDisconnect {
       try {
         user = this.jwtService.verify(token);
       } catch {
+        this.telemetry.markConnectDenied(client.id, "invalid_token", payload.vmId);
         client.emit("error", { message: "Invalid or expired token" });
         client.disconnect();
         return;
       }
+
+      this.telemetry.markConnectAttempt(client.id, payload.vmId, user.sub);
 
       const vm = await this.prisma.virtualMachine.findUnique({
         where: { id: payload.vmId },
       });
 
       if (!vm) {
+        this.telemetry.markConnectDenied(client.id, "vm_not_found", payload.vmId, user.sub);
         client.emit("error", { message: "Virtual machine not found" });
         return;
       }
 
       if (user.role !== "ADMIN" && vm.userId !== user.sub) {
+        this.telemetry.markConnectDenied(client.id, "access_denied", payload.vmId, user.sub);
         client.emit("error", { message: "Access denied" });
         return;
       }
 
       if (vm.status !== "RUNNING") {
+        this.telemetry.markConnectDenied(client.id, `vm_not_running:${vm.status}`, payload.vmId, user.sub);
         client.emit("error", {
           message: `VM is not running (current status: ${vm.status})`,
         });
@@ -87,14 +141,24 @@ export class TerminalGateway implements OnGatewayDisconnect {
       }
 
       if (!vm.sshHost) {
+        this.telemetry.markConnectDenied(client.id, "ssh_host_missing", payload.vmId, user.sub);
         client.emit("error", { message: "VM SSH host not configured" });
         return;
       }
 
       const sshClient = new Client();
-      const username = payload.username ?? vm.sshUsername ?? "root";
+      const username = payload.username ?? vm.sshUsername ?? "cloudvm";
+      let connectTimeout: NodeJS.Timeout | null = null;
+
+      const clearConnectTimeout = () => {
+        if (connectTimeout) {
+          clearTimeout(connectTimeout);
+          connectTimeout = null;
+        }
+      };
 
       sshClient.on("ready", () => {
+        clearConnectTimeout();
         this.logger.log(
           `SSH ready for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) as ${username}`,
         );
@@ -104,12 +168,14 @@ export class TerminalGateway implements OnGatewayDisconnect {
           (err, stream) => {
             if (err) {
               this.logger.error("Failed to open SSH shell", err);
+              this.telemetry.markConnectFailed(client.id, "ssh_shell_open_failed", vm.id, user.sub);
               client.emit("error", { message: "Failed to open SSH shell" });
               sshClient.end();
               return;
             }
 
             this.sessions.set(client.id, { sshClient, stream });
+            this.telemetry.markConnectSuccess(client.id, vm.id, user.sub);
 
             // Emit "connected" with object shape — matches Terminal.tsx handler
             client.emit("connected", {
@@ -117,15 +183,18 @@ export class TerminalGateway implements OnGatewayDisconnect {
             });
 
             stream.on("data", (data: Buffer) => {
+              this.telemetry.addOutputBytes(client.id, data.byteLength);
               client.emit("output", data.toString("utf-8"));
             });
 
             stream.stderr.on("data", (data: Buffer) => {
+              this.telemetry.addOutputBytes(client.id, data.byteLength);
               client.emit("output", data.toString("utf-8"));
             });
 
             stream.on("close", () => {
               this.logger.log(`SSH stream closed for VM ${vm.id}`);
+              this.telemetry.markDisconnect(client.id, "ssh_stream_closed");
               // Emit "disconnected" with object shape — matches Terminal.tsx handler
               client.emit("disconnected", { message: "SSH session closed" });
               this.cleanupSession(client.id);
@@ -135,28 +204,87 @@ export class TerminalGateway implements OnGatewayDisconnect {
       });
 
       sshClient.on("error", (err) => {
-        this.logger.error(`SSH error for VM ${vm.id}`, err.message);
-        client.emit("error", {
-          message: `SSH connection failed: ${err.message}`,
-        });
+        clearConnectTimeout();
+        this.logger.error(`SSH error for VM ${vm.id} (${vm.sshHost})`, err.message);
+        this.telemetry.markConnectFailed(client.id, `ssh_error:${err.message}`, vm.id, user.sub);
+
+        // Give the user an actionable message based on the error type
+        let userMessage: string;
+        if (err.message.includes("ECONNREFUSED")) {
+          userMessage = `SSH refused at ${vm.sshHost}:${vm.sshPort ?? 22}. The VM may still be booting — try again in a few seconds.`;
+        } else if (err.message.includes("ETIMEDOUT") || err.message.includes("Timed out")) {
+          userMessage = `SSH timed out connecting to ${vm.sshHost}. The VM may still be booting, or check that port 22 is reachable.`;
+        } else if (err.message.includes("Authentication") || err.message.includes("auth")) {
+          userMessage = `SSH authentication failed at ${vm.sshHost}. The SSH key may not have been injected into the VM yet — wait a moment and try again.`;
+        } else {
+          userMessage = `SSH error: ${err.message}`;
+        }
+
+        client.emit("error", { message: userMessage });
         this.cleanupSession(client.id);
       });
 
       sshClient.on("close", () => {
+        clearConnectTimeout();
         this.logger.log(`SSH connection closed for VM ${vm.id}`);
+        this.telemetry.markDisconnect(client.id, "ssh_connection_closed");
         this.cleanupSession(client.id);
       });
 
-      sshClient.connect({
+      const connectOptions: {
+        host: string;
+        port: number;
+        username: string;
+        password?: string;
+        privateKey?: string;
+        readyTimeout: number;
+        keepaliveInterval: number;
+        keepaliveCountMax: number;
+      } = {
         host: vm.sshHost,
         port: vm.sshPort ?? 22,
         username,
-        password: payload.password || undefined,
-        readyTimeout: 15000,
+        // 30 s gives slow VMs time to finish cloud-init before we give up.
+        // 15 s was too short for freshly booted VMs.
+        readyTimeout: 30000,
         keepaliveInterval: 30000,
-      });
+        keepaliveCountMax: 5,
+      };
+
+      this.logger.log(
+        `SSH connecting: ${username}@${vm.sshHost}:${vm.sshPort ?? 22} ` +
+        `auth=${payload.privateKey ? "privateKey" : "password"}`,
+      );
+
+      connectTimeout = setTimeout(() => {
+        this.logger.error(
+          `SSH connect timeout for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) after ${this.sshConnectTimeoutMs}ms`,
+        );
+        this.telemetry.markConnectFailed(client.id, "ssh_connect_timeout", vm.id, user.sub);
+        client.emit("error", {
+          message:
+            `Timed out reaching ${vm.sshHost}:${vm.sshPort ?? 22}. SSH key may be correct, but this usually means the VM network is not reachable from the VM service host.`,
+        });
+        this.cleanupSession(client.id);
+      }, this.sshConnectTimeoutMs);
+
+      if (payload.privateKey && payload.privateKey.trim().length > 0) {
+        connectOptions.privateKey = payload.privateKey;
+      } else if (payload.password) {
+        connectOptions.password = payload.password;
+      } else {
+        // Neither credential was provided — tell the client explicitly
+        this.telemetry.markConnectDenied(client.id, "no_credentials", payload.vmId, user.sub);
+        client.emit("error", {
+          message: "No SSH credentials provided. Supply a private key or password.",
+        });
+        return;
+      }
+
+      sshClient.connect(connectOptions);
     } catch (error) {
       this.logger.error("Error in connect-ssh handler", error);
+      this.telemetry.markConnectFailed(client.id, "internal_error", payload?.vmId);
       client.emit("error", { message: "Internal server error" });
     }
   }
@@ -164,9 +292,31 @@ export class TerminalGateway implements OnGatewayDisconnect {
   @SubscribeMessage("input")
   handleInput(@ConnectedSocket() client: Socket, @MessageBody() data: string) {
     const session = this.sessions.get(client.id);
-    if (session?.stream) {
-      session.stream.write(data);
+    if (!session?.stream) return;
+
+    if (typeof data !== "string") {
+      this.telemetry.markInputRejected(client.id, "invalid_terminal_input_type");
+      client.emit("error", { message: "Invalid terminal input" });
+      return;
     }
+
+    const byteLength = Buffer.byteLength(data, "utf8");
+    if (byteLength === 0) return;
+
+    if (byteLength > this.maxInputBytesPerEvent) {
+      this.telemetry.markInputRejected(client.id, "input_chunk_too_large");
+      client.emit("error", { message: "Input chunk too large" });
+      return;
+    }
+
+    if (!this.allowInputRate(client.id, byteLength)) {
+      this.telemetry.markInputRejected(client.id, "input_rate_too_high");
+      client.emit("error", { message: "Input rate too high" });
+      return;
+    }
+
+    this.telemetry.addInputBytes(client.id, byteLength);
+    session.stream.write(data);
   }
 
   @SubscribeMessage("resize")
@@ -175,9 +325,37 @@ export class TerminalGateway implements OnGatewayDisconnect {
     @MessageBody() payload: { cols: number; rows: number },
   ) {
     const session = this.sessions.get(client.id);
-    if (session?.stream) {
-      session.stream.setWindow(payload.rows, payload.cols, 0, 0);
+    if (!session?.stream || !payload) return;
+
+    const cols = Number.isFinite(payload.cols)
+      ? Math.max(20, Math.min(500, Math.floor(payload.cols)))
+      : 80;
+    const rows = Number.isFinite(payload.rows)
+      ? Math.max(10, Math.min(200, Math.floor(payload.rows)))
+      : 24;
+
+    session.stream.setWindow(rows, cols, 0, 0);
+  }
+
+  private allowInputRate(clientId: string, incomingBytes: number): boolean {
+    const now = Date.now();
+    const current = this.inputWindowStats.get(clientId);
+
+    if (!current || now - current.windowStartMs >= 1000) {
+      this.inputWindowStats.set(clientId, {
+        windowStartMs: now,
+        bytesInWindow: incomingBytes,
+      });
+      return incomingBytes <= this.maxInputBytesPerSecond;
     }
+
+    const nextBytes = current.bytesInWindow + incomingBytes;
+    if (nextBytes > this.maxInputBytesPerSecond) {
+      return false;
+    }
+
+    current.bytesInWindow = nextBytes;
+    return true;
   }
 
   private cleanupSession(clientId: string) {
@@ -187,5 +365,6 @@ export class TerminalGateway implements OnGatewayDisconnect {
       try { session.sshClient?.end(); }  catch { /* ignore */ }
       this.sessions.delete(clientId);
     }
+    this.inputWindowStats.delete(clientId);
   }
 }

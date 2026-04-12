@@ -13,6 +13,7 @@ import { NatsService } from "../nats/nats.service";
 interface VmStatusPayload {
   vmId: string;
   status: string;
+  userId?: string;
   ipAddress?: string;
   oneVmId?: number;
   sshHost?: string;
@@ -21,9 +22,18 @@ interface VmStatusPayload {
   action?: string;
 }
 
+interface VmSshReadyPayload {
+  vmId: string;
+  userId?: string;
+  privateKey?: string;
+  generatedSshPrivateKey?: string;
+  sshPrivateKey?: string;
+}
+
 @WebSocketGateway({
   cors: { origin: "*" },
   namespace: "/vm-events",
+  path: "/vm-events/socket.io",
 })
 export class VmEventsGateway
   implements OnModuleInit, OnGatewayConnection, OnGatewayDisconnect
@@ -47,7 +57,16 @@ export class VmEventsGateway
         await this.broadcastVmStatus(data as unknown as VmStatusPayload);
       },
     );
+
+    this.nats.subscribe(
+      "vm.ssh.ready",
+      async (data: Record<string, unknown>) => {
+        await this.broadcastVmSshReady(data as unknown as VmSshReadyPayload);
+      },
+    );
+
     this.logger.log("Listening for VM status updates via NATS → WebSocket");
+    this.logger.log("Listening for VM SSH key updates via NATS → WebSocket");
   }
 
   handleConnection(client: Socket) {
@@ -97,6 +116,15 @@ export class VmEventsGateway
    */
   private async broadcastVmStatus(data: VmStatusPayload) {
     try {
+      if (data.userId) {
+        this.server.to(`user:${data.userId}`).emit("vm:status", data);
+        this.server.to("admin").emit("vm:status", data);
+        this.logger.log(
+          `Broadcasted VM ${data.vmId} status=${data.status} via payload userId=${data.userId}`,
+        );
+        return;
+      }
+
       const vm = await this.prisma.virtualMachine.findUnique({
         where: { id: data.vmId },
         select: { userId: true, name: true },
@@ -117,6 +145,57 @@ export class VmEventsGateway
       );
     } catch (error) {
       this.logger.error(`Error broadcasting VM status: ${error}`);
+    }
+  }
+
+  /**
+   * Forward generated VM SSH private key events to the VM owner.
+   */
+  private async broadcastVmSshReady(data: VmSshReadyPayload) {
+    try {
+      const privateKey =
+        data.privateKey ?? data.generatedSshPrivateKey ?? data.sshPrivateKey;
+
+      if (!data.vmId || !privateKey) {
+        this.logger.warn(
+          `Ignoring vm.ssh.ready event with missing vmId/privateKey (vmId=${data.vmId ?? "unknown"})`,
+        );
+        return;
+      }
+
+      if (data.userId) {
+        this.server.to(`user:${data.userId}`).emit("vm:ssh-key", {
+          vmId: data.vmId,
+          privateKey,
+        });
+        this.logger.log(
+          `Broadcasted vm:ssh-key for VM ${data.vmId} to user=${data.userId}`,
+        );
+        return;
+      }
+
+      const vm = await this.prisma.virtualMachine.findUnique({
+        where: { id: data.vmId },
+        select: { userId: true },
+      });
+
+      if (!vm) {
+        this.logger.warn(
+          `Ignoring vm.ssh.ready event for unknown VM ${data.vmId}`,
+        );
+        return;
+      }
+
+      this.server.to(`user:${vm.userId}`).emit("vm:ssh-key", {
+        vmId: data.vmId,
+        privateKey,
+      });
+
+      this.logger.log(
+        `Broadcasted vm:ssh-key for VM ${data.vmId} to user=${vm.userId}`,
+      );
+    } catch (error) {
+      this.logger.error(`Error broadcasting VM SSH key: ${error}`);
     }
   }
 }

@@ -32,7 +32,8 @@ Save the credentials — you'll need them for `.env`:
 
 ```
 ONE_XMLRPC=http://<OPENNEBULA_IP>:2633/RPC2
-ONE_AUTH_TOKEN=cloudvm-api:YourSecurePassword123!
+ONE_USERNAME=cloudvm-api
+ONE_PASSWORD=YourSecurePassword123!
 ```
 
 ---
@@ -159,7 +160,8 @@ Update your `.env` file with OpenNebula connection details:
 ```env
 # OpenNebula
 ONE_XMLRPC=http://192.168.1.10:2633/RPC2
-ONE_AUTH_TOKEN=cloudvm-api:YourSecurePassword123!
+ONE_USERNAME=cloudvm-api
+ONE_PASSWORD=YourSecurePassword123!
 ```
 
 These values are used by the Python worker to connect to OpenNebula.
@@ -174,7 +176,7 @@ Test the connection from your development machine:
 import pyone
 server = pyone.OneServer(
     "http://<ONE_IP>:2633/RPC2",
-    session="cloudvm-api:YourSecurePassword123!"
+      session="cloudvm-api:YourSecurePassword123!"
 )
 
 # List templates

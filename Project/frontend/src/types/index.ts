@@ -94,3 +94,60 @@ export interface UserStats {
   active: number;
   newThisMonth: number;
 }
+
+export type AssistantRole = "USER" | "ASSISTANT" | "SYSTEM";
+
+export interface AssistantMessage {
+  id: string;
+  role: AssistantRole;
+  content: string;
+  provider?: string;
+  model?: string;
+  createdAt: string;
+  pendingAction?: AssistantPendingAction;
+}
+
+export interface AssistantPendingAction {
+  action: "start" | "stop" | "restart";
+  vmId: string;
+  vmName: string;
+  confirmationToken: string;
+}
+
+export interface AssistantConfirmActionResponse {
+  ok: boolean;
+  action: "start" | "stop" | "restart";
+  vmId: string;
+  vmName: string;
+  message: string;
+}
+
+export interface AssistantConversation {
+  id: string;
+  title?: string;
+  createdAt: string;
+  updatedAt: string;
+  _count?: {
+    messages: number;
+  };
+}
+
+export type AssistantSseEvent =
+  | {
+      conversationId: string;
+      messageId?: string;
+      provider?: string;
+      model?: string;
+      pendingAction?: AssistantPendingAction;
+    }
+  | {
+      type: "chunk";
+      token: string;
+    }
+  | {
+      type: "done";
+    }
+  | {
+      type: "error";
+      message: string;
+    };

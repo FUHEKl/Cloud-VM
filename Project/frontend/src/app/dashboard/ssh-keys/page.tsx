@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
+import { getErrorMessage } from "@/lib/error";
 import type { SshKey } from "@/types";
 
 export default function SshKeysPage() {
@@ -36,8 +37,8 @@ export default function SshKeysPage() {
       setForm({ name: "", publicKey: "" });
       setShowForm(false);
       await loadKeys();
-    } catch (err: any) {
-      setError(err.response?.data?.message || "Failed to add SSH key");
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, "Failed to add SSH key"));
     } finally {
       setSubmitting(false);
     }

@@ -10,6 +10,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
   const [form, setForm] = useState({ email: "", password: "" });
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,8 +19,8 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(form.email, form.password);
-      router.push("/dashboard");
+      await login(form.email, form.password, rememberMe);
+      router.replace("/dashboard/profile");
     } catch (err) {
       setError(getErrorMessage(err, "Invalid email or password"));
     } finally {
@@ -98,6 +99,16 @@ export default function LoginPage() {
                 required
               />
             </div>
+
+            <label className="flex items-center gap-2 text-sm text-cyber-text-dim">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+                className="w-4 h-4 rounded border-cyber-border bg-cyber-bg"
+              />
+              <span>Remember me on this device</span>
+            </label>
 
             <button
               type="submit"

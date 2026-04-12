@@ -1,26 +1,14 @@
 import { Injectable, NestMiddleware } from "@nestjs/common";
 import { Request, Response, NextFunction } from "express";
-import { createProxyMiddleware } from "http-proxy-middleware";
-import { forwardParsedBody } from "./proxy-body.util";
+import { createJsonApiProxy } from "./create-json-api-proxy.util";
 
 @Injectable()
 export class PlanProxyMiddleware implements NestMiddleware {
-  private proxy = createProxyMiddleware({
+  private proxy = createJsonApiProxy({
     target: process.env.VM_SERVICE_URL || "http://localhost:3004",
-    changeOrigin: true,
-    pathRewrite: {
-      "^/api/plans": "/plans",
-    },
-    onProxyReq: (proxyReq, req) => {
-      forwardParsedBody(proxyReq, req as Request);
-    },
-    onError: (err, req, res) => {
-      console.error("Plan proxy error:", err.message);
-      (res as Response).status(502).json({
-        statusCode: 502,
-        message: "VM service unavailable",
-      });
-    },
+    pathRewrite: { "^/api/plans": "/plans" },
+    errorLabel: "Plan",
+    unavailableMessage: "VM service unavailable",
   });
 
   use(req: Request, res: Response, next: NextFunction) {

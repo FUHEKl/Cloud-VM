@@ -1,0 +1,24 @@
+@startuml
+package "Frontend" {
+  [Next.js Web App]
+}
+package "Backend" {
+  [Gateway Service]
+  [Auth Service]
+  [User Service]
+  [VM Service]
+  [Worker Service]
+}
+database "DB" as DB
+cloud "OpenNebula API" as ONE
+
+[Next.js Web App] --> [Gateway Service]
+[Gateway Service] --> [Auth Service]
+[Gateway Service] --> [User Service]
+[Gateway Service] --> [VM Service]
+[Auth Service] --> DB
+[User Service] --> DB
+[VM Service] --> DB
+[VM Service] --> ONE
+[Worker Service] --> ONE
+@enduml

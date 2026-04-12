@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import Cookies from "js-cookie";
 import api from "./api";
+import { clearAuthCookies, setAuthCookies } from "./session";
 import type { User } from "@/types";
 
 interface AuthState {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   register: (data: {
     email: string;
     password: string;
@@ -23,17 +24,23 @@ export const useAuth = create<AuthState>((set) => ({
   isLoading: true,
   isAuthenticated: false,
 
-  login: async (email, password) => {
+  login: async (email, password, rememberMe = true) => {
     const { data } = await api.post("/auth/login", { email, password });
-    Cookies.set("accessToken", data.accessToken, { expires: 1 });
-    Cookies.set("refreshToken", data.refreshToken, { expires: 7 });
+    setAuthCookies({
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      rememberMe,
+    });
     set({ user: data.user, isAuthenticated: true, isLoading: false });
   },
 
   register: async (formData) => {
     const { data } = await api.post("/auth/register", formData);
-    Cookies.set("accessToken", data.accessToken, { expires: 1 });
-    Cookies.set("refreshToken", data.refreshToken, { expires: 7 });
+    setAuthCookies({
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      rememberMe: true,
+    });
     set({ user: data.user, isAuthenticated: true, isLoading: false });
   },
 
@@ -46,8 +53,7 @@ export const useAuth = create<AuthState>((set) => ({
     } catch {
       // silent
     }
-    Cookies.remove("accessToken");
-    Cookies.remove("refreshToken");
+    clearAuthCookies();
     set({ user: null, isAuthenticated: false, isLoading: false });
   },
 
@@ -61,6 +67,7 @@ export const useAuth = create<AuthState>((set) => ({
       const { data } = await api.get("/auth/me");
       set({ user: data, isAuthenticated: true, isLoading: false });
     } catch {
+      clearAuthCookies();
       set({ user: null, isAuthenticated: false, isLoading: false });
     }
   },

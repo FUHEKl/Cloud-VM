@@ -146,6 +146,20 @@ export class NatsService implements OnModuleInit {
         return;
       }
 
+      if (status === "DELETED") {
+        try {
+          const deleted = await this.prisma.virtualMachine.deleteMany({ where: { id: vmId } });
+          if (deleted.count === 0) {
+            this.logger.warn(`Skip DELETED sync: VM ${vmId} not found in this DB`);
+          } else {
+            this.logger.log(`Hard-deleted VM ${vmId} from DB`);
+          }
+        } catch (error) {
+          this.logger.error(`Failed to hard-delete VM ${vmId}`, error);
+        }
+        return;
+      }
+
       const updateData: Record<string, any> = { status: status as VmStatus };
       if (ipAddress) updateData.ipAddress = ipAddress;
       if (oneVmId)   updateData.oneVmId   = oneVmId;
@@ -153,11 +167,15 @@ export class NatsService implements OnModuleInit {
       if (sshPort)   updateData.sshPort   = sshPort;
 
       try {
-        await this.prisma.virtualMachine.update({
+        const updated = await this.prisma.virtualMachine.updateMany({
           where: { id: vmId },
           data: updateData,
         });
-        this.logger.log(`Persisted VM ${vmId} status=${status}`);
+        if (updated.count === 0) {
+          this.logger.warn(`Skip status sync: VM ${vmId} not found in this DB`);
+        } else {
+          this.logger.log(`Persisted VM ${vmId} status=${status}`);
+        }
       } catch (error) {
         this.logger.error(`Failed to update VM ${vmId}`, error);
       }

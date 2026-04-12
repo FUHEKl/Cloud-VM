@@ -55,6 +55,7 @@ echo   API Gateway: http://localhost:3001
 echo   Auth:        http://localhost:3002
 echo   User:        http://localhost:3003
 echo   VM + WS:     http://localhost:3004
+echo   AI Service:  http://localhost:3006
 echo   NATS Monitor:http://localhost:8222
 echo.
 echo   Logs:  docker-compose logs -f

@@ -1,14 +1,47 @@
 import json
 import asyncio
 import logging
+import os
 import unicodedata
 import re
 
 import pyone
 import redis as redis_lib
 
-from config import ONE_XMLRPC, ONE_USERNAME, ONE_PASSWORD
-from db_updater import update_vm_status, get_vm_one_id, get_user_ssh_keys
+from config import ONE_XMLRPC, ONE_USERNAME, ONE_PASSWORD, ONE_IP_OFFSET
+from db_updater import update_vm_status, get_vm_one_id, get_user_ssh_keys, delete_vm_record
+
+logger = logging.getLogger(__name__)
+
+
+def _escape_one_template_value(value: str) -> str:
+    """Escape a value so it can be safely embedded inside OpenNebula template quotes."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _load_extra_ssh_keys() -> list[str]:
+    """
+    Load extra SSH public keys from a file mounted into the container.
+
+    The file is written by scripts/setup-https.sh from the server's
+    /root/.ssh/id_rsa.pub so that the OpenNebula/Jetstream host key is
+    automatically injected into every new VM's authorized_keys.
+
+    Returns an empty list if the file is absent or empty.
+    """
+    path = os.getenv("EXTRA_SSH_KEYS_FILE", "/app/extra_ssh_keys.txt")
+    try:
+        with open(path) as fh:
+            keys = [line.strip() for line in fh if line.strip()]
+        if keys:
+            logger.info("Loaded %d extra SSH key(s) from %s", len(keys), path)
+        return keys
+    except FileNotFoundError:
+        logger.debug("Extra SSH keys file not found at %s — skipping", path)
+        return []
+    except Exception as exc:
+        logger.warning("Could not read extra SSH keys from %s: %s", path, exc)
+        return []
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +87,7 @@ class VMHandler:
         disk_gb   = data["diskGb"]
         os_template = data["osTemplate"]
         user_id   = data.get("userId")
+        generated_ssh_public_key = data.get("sshPublicKey")
 
         # Idempotency: if already instantiated, just resume IP polling
         existing_one_id = get_vm_one_id(vm_id)
@@ -67,11 +101,37 @@ class VMHandler:
             if template_id is None:
                 raise Exception(f"Template '{os_template}' not found in OpenNebula")
 
-            ssh_keys_str = ""
+            ssh_keys: list[str] = []
+
+            # Always inject the server-level key (from /root/.ssh/id_rsa.pub
+            # on the OpenNebula/Jetstream host, copied by setup-https.sh).
+            extra_keys = _load_extra_ssh_keys()
+            if extra_keys:
+                ssh_keys.extend(extra_keys)
+
+            db_ssh_key_count = 0
             if user_id:
                 keys = get_user_ssh_keys(user_id)
                 if keys:
-                    ssh_keys_str = "\n".join(keys)
+                    ssh_keys.extend(keys)
+                    db_ssh_key_count = len(keys)
+
+            payload_ssh_key_count = 0
+            if isinstance(generated_ssh_public_key, str) and generated_ssh_public_key.strip():
+                ssh_keys.append(generated_ssh_public_key.strip())
+                payload_ssh_key_count = 1
+
+            # Deduplicate while preserving order
+            ssh_keys = [k for k in dict.fromkeys(ssh_keys) if k]
+            ssh_keys_str = "\n".join(ssh_keys)
+
+            logger.info(
+                "VM %s SSH keys prepared (total=%s, fromDb=%s, fromPayload=%s)",
+                vm_id,
+                len(ssh_keys),
+                db_ssh_key_count,
+                payload_ssh_key_count,
+            )
 
             extra_template = (
                 f'NAME="{name}"\n'
@@ -80,7 +140,14 @@ class VMHandler:
                 f"MEMORY={ram_mb}\n"
             )
             if ssh_keys_str:
-                extra_template += f'CONTEXT=[\n  SSH_PUBLIC_KEY="{ssh_keys_str}"\n]\n'
+                # Inject key(s) as a per-VM template attribute and let template
+                # CONTEXT map it via SSH_PUBLIC_KEY="$SSH_PUBLIC_KEY".
+                #
+                # We encode newlines as literal \n to keep this attribute
+                # single-line and parse-safe in OpenNebula template text.
+                keys_for_template = ssh_keys_str.replace("\r", "").replace("\n", "\\n")
+                escaped_ssh_keys = _escape_one_template_value(keys_for_template)
+                extra_template += f'SSH_PUBLIC_KEY="{escaped_ssh_keys}"\n'
 
             one_vm_id = await asyncio.to_thread(
                 self.one.template.instantiate, template_id, name, False, extra_template
@@ -140,20 +207,24 @@ class VMHandler:
     async def delete_vm(self, data: dict, nats_client) -> None:
         vm_id     = data["vmId"]
         one_vm_id = data.get("oneVmId")
+        user_id   = data.get("userId")
 
         if one_vm_id is None:
-            logger.warning(f"VM {vm_id} has no oneVmId — marking DELETED without OpenNebula")
-            update_vm_status(vm_id, "DELETED")
+            logger.warning(f"VM {vm_id} has no oneVmId — deleting from DB without OpenNebula")
+            delete_vm_record(vm_id)
             self._delete_vm_cache(vm_id)
-            await self._publish_status(nats_client, vm_id, "DELETED", {})
+            await self._publish_status(nats_client, vm_id, "DELETED", {"userId": user_id})
             return
 
         try:
             await asyncio.to_thread(self.one.vm.action, "terminate", one_vm_id)
             logger.info(f"Terminated ONE VM {one_vm_id}")
-            update_vm_status(vm_id, "DELETED")
+            delete_vm_record(vm_id)
             self._delete_vm_cache(vm_id)
-            await self._publish_status(nats_client, vm_id, "DELETED", {"oneVmId": one_vm_id})
+            await self._publish_status(nats_client, vm_id, "DELETED", {
+                "oneVmId": one_vm_id,
+                "userId": user_id,
+            })
         except Exception as e:
             logger.error(f"Error deleting VM {vm_id}: {e}", exc_info=True)
             update_vm_status(vm_id, "ERROR")
@@ -264,16 +335,29 @@ class VMHandler:
 
                 # STATE=3, LCM_STATE=3 → RUNNING
                 if state == 3 and lcm == 3:
-                    ip = self._extract_ip(vm)
-                    if ip:
-                        update_vm_status(vm_id, "RUNNING", ip_address=ip, one_vm_id=one_vm_id, ssh_host=ip)
+                    original_ip = self._extract_ip(vm)
+                    if original_ip:
+                        ip = self._apply_ip_offset(original_ip, ONE_IP_OFFSET)
+                        update_vm_status(
+                            vm_id,
+                            "RUNNING",
+                            ip_address=ip,
+                            one_vm_id=one_vm_id,
+                            ssh_host=ip,
+                            ssh_username="cloudvm",
+                        )
                         self._cache_vm_status(vm_id, "RUNNING", ip=ip)
                         await self._publish_status(nats_client, vm_id, "RUNNING", {
                             "oneVmId":   one_vm_id,
                             "ipAddress": ip,
                             "sshHost":   ip,
                         })
-                        logger.info(f"VM {vm_id} RUNNING, IP={ip}")
+                        logger.info(
+                            "VM %s RUNNING, OpenNebula IP=%s, adjusted IP=%s",
+                            vm_id,
+                            original_ip,
+                            ip,
+                        )
                         return
 
             except Exception as e:
@@ -318,6 +402,41 @@ class VMHandler:
         except Exception:
             pass
         return None
+
+    def _apply_ip_offset(self, ip: str, offset: int) -> str:
+        """
+        Add `offset` to the last octet of an IPv4 address.
+
+        offset=0  → return the IP unchanged (correct for most setups)
+        offset=1  → increment last octet by 1 (set ONE_IP_OFFSET=1 in .env
+                    when OpenNebula reports the bridge/gateway IP and the VM
+                    guest IP is one higher)
+
+        Any offset that would push the last octet above 255 is clamped and a
+        warning is logged.
+        """
+        if offset == 0:
+            return ip
+        try:
+            parts = ip.strip().split(".")
+            if len(parts) != 4:
+                return ip
+            octets = [int(p) for p in parts]
+            if any(o < 0 or o > 255 for o in octets):
+                return ip
+            new_last = octets[3] + offset
+            if new_last > 255:
+                logger.warning(
+                    "ONE_IP_OFFSET=%d would push last octet of %s above 255 — keeping original",
+                    offset, ip,
+                )
+                return ip
+            octets[3] = new_last
+            adjusted = ".".join(str(o) for o in octets)
+            logger.info("IP offset applied: %s → %s (ONE_IP_OFFSET=%d)", ip, adjusted, offset)
+            return adjusted
+        except Exception:
+            return ip
 
     async def _find_template(self, template_name: str) -> int | None:
         if self._template_cache is None:
