@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
+import MfaSettingsPanel from "@/components/auth/MfaSettingsPanel";
 
 export default function ProfilePage() {
   const { user, fetchUser } = useAuth();
@@ -21,6 +22,14 @@ export default function ProfilePage() {
   const [passwordMsg, setPasswordMsg] = useState({ type: "", text: "" });
   const [saving, setSaving] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
+
+  useEffect(() => {
+    setProfile({
+      firstName: user?.firstName || "",
+      lastName: user?.lastName || "",
+      email: user?.email || "",
+    });
+  }, [user?.firstName, user?.lastName, user?.email]);
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,6 +163,13 @@ export default function ProfilePage() {
             {saving ? "Saving..." : "Save Changes"}
           </button>
         </form>
+      </div>
+
+      <div className="mt-6">
+        <MfaSettingsPanel
+          title="Security & MFA"
+          description="Enable MFA for your account and manage recovery codes from one place."
+        />
       </div>
 
       {/* Password Form */}

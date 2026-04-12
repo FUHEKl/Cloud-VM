@@ -15,6 +15,9 @@ export interface User {
   lastName: string;
   role: Role;
   isActive: boolean;
+  mfaEnabled?: boolean;
+  mfaEnabledAt?: string | null;
+  mfaRecoveryCodesGeneratedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

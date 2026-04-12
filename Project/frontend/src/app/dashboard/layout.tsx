@@ -3,9 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import Cookies from "js-cookie";
 import { useAuth } from "@/lib/auth";
-import { clearAuthCookies, isRememberMeEnabled } from "@/lib/session";
 import clsx from "clsx";
 import AssistantChat from "@/components/assistant/AssistantChat";
 
@@ -138,40 +136,6 @@ export default function DashboardLayout({
   }, [isLoading, isAuthenticated, router]);
 
   useEffect(() => {
-    const navEntries =
-      typeof performance !== "undefined"
-        ? performance.getEntriesByType("navigation")
-        : [];
-
-    const navigationType =
-      navEntries.length > 0
-        ? (navEntries[0] as PerformanceNavigationTiming).type
-        : "navigate";
-
-    if (navigationType === "reload" && !isRememberMeEnabled()) {
-      clearAuthCookies();
-      router.replace("/login");
-      return;
-    }
-
-    const enforceCookieAuth = () => {
-      const token = Cookies.get("accessToken");
-      if (!token) {
-        router.replace("/login");
-      }
-    };
-
-    enforceCookieAuth();
-    window.addEventListener("pageshow", enforceCookieAuth);
-    window.addEventListener("popstate", enforceCookieAuth);
-
-    return () => {
-      window.removeEventListener("pageshow", enforceCookieAuth);
-      window.removeEventListener("popstate", enforceCookieAuth);
-    };
-  }, [router]);
-
-  useEffect(() => {
     if (isAssistantRoute && assistantOpen) {
       setAssistantOpen(false);
     }
@@ -213,7 +177,7 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     await logout();
-    router.replace("/login");
+    window.location.assign("/login");
   };
 
   return (
