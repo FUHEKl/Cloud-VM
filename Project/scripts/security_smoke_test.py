@@ -208,6 +208,41 @@ def run_tests(base_url: str) -> Tuple[list[TestResult], int]:
         f"token_present={bool(access_token)}, status={status2}",
     )
 
+    # 5b) Anomaly mode (log) should not block valid login from changed user-agent
+    anomaly_email = f"anomaly.{int(time.time())}.{rand_suffix()}@example.com"
+    anomaly_password = "Str0ng!Passw0rd#2026"
+    anomaly_a = HttpClient(base_url, user_agent="CloudVM-UA-Anomaly-A")
+    anomaly_b = HttpClient(base_url, user_agent="CloudVM-UA-Anomaly-B")
+
+    anomaly_a.request(
+        "POST",
+        "/api/auth/register",
+        {
+            "email": anomaly_email,
+            "password": anomaly_password,
+            "firstName": "Anomaly",
+            "lastName": "A",
+        },
+    )
+    st_anomaly_login, _, anomaly_body = anomaly_b.request(
+        "POST",
+        "/api/auth/login",
+        {
+            "email": anomaly_email,
+            "password": anomaly_password,
+        },
+    )
+    anomaly_json = parse_json(anomaly_body)
+    anomaly_login_ok = st_anomaly_login == 200 and (
+        bool(anomaly_json.get("accessToken")) or bool(anomaly_json.get("mfaRequired"))
+    )
+    add(
+        "SEC-05B",
+        "Anomaly detection in log mode does not block valid login",
+        anomaly_login_ok,
+        f"status={st_anomaly_login}, has_access={bool(anomaly_json.get('accessToken'))}, mfa_required={bool(anomaly_json.get('mfaRequired'))}",
+    )
+
     # 6) Brute-force lockout on login (same email, wrong password repeatedly)
     victim_email = f"lock.{int(time.time())}.{rand_suffix()}@example.com"
     _ = anon.request(

@@ -51,6 +51,13 @@ interface MfaPendingSetupPayload {
   fingerprint: string;
 }
 
+interface LoginContextPayload {
+  fingerprint: string;
+  ip: string;
+  userAgent: string;
+  lastSeenAt: string;
+}
+
 export interface MfaAuditEntry {
   action: string;
   ip: string;
@@ -98,6 +105,18 @@ export class AuthService {
   private readonly mfaRecoveryCodesCount = Math.max(
     5,
     Number(process.env.ADMIN_MFA_RECOVERY_CODES_COUNT || "10"),
+  );
+  private readonly anomalyRiskThreshold = Math.max(
+    1,
+    Number(process.env.AUTH_ANOMALY_RISK_THRESHOLD || "70"),
+  );
+  private readonly anomalyMode =
+    (process.env.AUTH_ANOMALY_MODE || "log").trim().toLowerCase() === "block"
+      ? "block"
+      : "log";
+  private readonly loginContextTtlSeconds = Math.max(
+    3600,
+    Number(process.env.AUTH_LOGIN_CONTEXT_TTL_SECONDS || `${90 * 24 * 60 * 60}`),
   );
 
   constructor(
@@ -159,6 +178,10 @@ export class AuthService {
 
   private getMfaSetupKey(userId: string): string {
     return `security:auth:mfa:setup:${userId}`;
+  }
+
+  private getLoginContextKey(userId: string): string {
+    return `security:auth:login-context:${userId}`;
   }
 
   private getUserAgent(req: Request): string {
@@ -267,6 +290,89 @@ export class AuthService {
     return timingSafeEqual(left, right);
   }
 
+  private async getPreviousLoginContext(userId: string): Promise<LoginContextPayload | null> {
+    await this.ensureRedisConnected();
+    const raw = await this.redis.get(this.getLoginContextKey(userId));
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as LoginContextPayload;
+      if (!parsed?.fingerprint || !parsed?.ip || !parsed?.userAgent) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private async storeLoginContext(userId: string, req: Request): Promise<void> {
+    const payload: LoginContextPayload = {
+      fingerprint: buildRequestFingerprint(req),
+      ip: getClientIp(req),
+      userAgent: this.getUserAgent(req),
+      lastSeenAt: new Date().toISOString(),
+    };
+
+    try {
+      await this.ensureRedisConnected();
+      await this.redis.set(
+        this.getLoginContextKey(userId),
+        JSON.stringify(payload),
+        "EX",
+        this.loginContextTtlSeconds,
+      );
+    } catch {
+      // Best effort only. Login must proceed even if redis is unavailable.
+    }
+  }
+
+  private async evaluateLoginAnomaly(userId: string, req: Request) {
+    const previous = await this.getPreviousLoginContext(userId);
+    if (!previous) {
+      return {
+        detected: false,
+        score: 0,
+        reasons: ["no_prior_context"],
+      };
+    }
+
+    let score = 0;
+    const reasons: string[] = [];
+
+    const currentFingerprint = buildRequestFingerprint(req);
+    const currentIp = getClientIp(req);
+    const currentUserAgent = this.getUserAgent(req);
+
+    if (currentFingerprint !== previous.fingerprint) {
+      score += 70;
+      reasons.push("fingerprint_changed");
+    }
+
+    if (currentIp !== previous.ip) {
+      score += 25;
+      reasons.push("ip_changed");
+    }
+
+    if (currentUserAgent !== previous.userAgent) {
+      score += 15;
+      reasons.push("user_agent_changed");
+    }
+
+    const previousSeenAt = Date.parse(previous.lastSeenAt || "");
+    if (Number.isFinite(previousSeenAt)) {
+      const daysSinceLastSeen = (Date.now() - previousSeenAt) / (1000 * 60 * 60 * 24);
+      if (daysSinceLastSeen > 30) {
+        score += 10;
+        reasons.push("long_gap_since_last_login");
+      }
+    }
+
+    return {
+      detected: score >= this.anomalyRiskThreshold,
+      score,
+      reasons,
+    };
+  }
+
   private async assertNotLocked(email: string, req: Request) {
     await this.ensureRedisConnected();
     const lockKey = this.getLockKey(email);
@@ -362,6 +468,7 @@ export class AuthService {
     });
 
     const tokens = await this.generateTokens(user, req);
+    await this.storeLoginContext(user.id, req);
 
     this.securityLogger.log({
       eventType: "auth.register.success",
@@ -398,6 +505,30 @@ export class AuthService {
     }
 
     await this.clearFailedLogins(dto.email);
+
+    const anomaly = await this.evaluateLoginAnomaly(user.id, req);
+    if (anomaly.detected) {
+      this.securityLogger.log({
+        eventType: "auth.login.anomaly_detected",
+        userId: user.id,
+        ip: getClientIp(req),
+        result: this.anomalyMode === "block" ? "blocked" : "failure",
+        metadata: {
+          email: user.email,
+          score: anomaly.score,
+          threshold: this.anomalyRiskThreshold,
+          reasons: anomaly.reasons,
+          mode: this.anomalyMode,
+        },
+      });
+
+      if (this.anomalyMode === "block") {
+        throw new HttpException(
+          "Suspicious login detected. Please retry from a trusted network or contact support.",
+          HttpStatus.FORBIDDEN,
+        );
+      }
+    }
 
     const isMfaEnabled = Boolean((user as any).mfaEnabled);
     const userMfaSecret = ((user as any).mfaSecret as string | null) || null;
@@ -495,6 +626,7 @@ export class AuthService {
     }
 
     const tokens = await this.generateTokens(user, req);
+    await this.storeLoginContext(user.id, req);
 
     this.securityLogger.log({
       eventType: "auth.login.success",
@@ -592,6 +724,7 @@ export class AuthService {
     await this.redis.del(challengeKey, attemptsKey);
 
     const tokens = await this.generateTokens(user, req);
+    await this.storeLoginContext(user.id, req);
 
     this.securityLogger.log({
       eventType: "auth.mfa.verified",
