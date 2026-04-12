@@ -64,6 +64,31 @@ Implemented:
 Env vars:
 - `AUTH_LOCK_MAX_ATTEMPTS`
 - `AUTH_LOCK_WINDOW_MINUTES`
+- `AUTH_LOCK_PROGRESSIVE_MULTIPLIER`
+- `AUTH_LOCK_MAX_MINUTES`
+
+OWASP:
+- A07: Identification and Authentication Failures
+- A04: Insecure Design
+
+---
+
+### 1.6 Optional CAPTCHA challenge hook (adaptive)
+
+Implemented:
+- Added adaptive CAPTCHA hook in auth login path.
+- CAPTCHA is only evaluated when enabled and failed-attempt threshold is reached.
+- Safe default is non-breaking (`AUTH_CAPTCHA_ENABLED=false`).
+- Optional shared-secret verification mode for environments without third-party CAPTCHA provider integration.
+- Security events logged for required/missing/invalid/passed CAPTCHA states.
+
+Env vars:
+- `AUTH_CAPTCHA_ENABLED`
+- `AUTH_CAPTCHA_FAIL_THRESHOLD`
+- `AUTH_CAPTCHA_SHARED_SECRET`
+
+Why:
+- Adds friction during probable credential-stuffing bursts while preserving smooth UX in normal conditions.
 
 OWASP:
 - A07: Identification and Authentication Failures

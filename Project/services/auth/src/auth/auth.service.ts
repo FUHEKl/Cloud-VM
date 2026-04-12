@@ -81,10 +81,23 @@ export class AuthService {
 
   private readonly lockWindowSeconds =
     Math.max(1, Number(process.env.AUTH_LOCK_WINDOW_MINUTES || "15")) * 60;
+  private readonly lockProgressiveMultiplier = Math.max(
+    1,
+    Number(process.env.AUTH_LOCK_PROGRESSIVE_MULTIPLIER || "1"),
+  );
+  private readonly lockMaxSeconds =
+    Math.max(1, Number(process.env.AUTH_LOCK_MAX_MINUTES || "60")) * 60;
   private readonly maxFailedAttempts = Math.max(
     1,
     Number(process.env.AUTH_LOCK_MAX_ATTEMPTS || "5"),
   );
+  private readonly captchaEnabled =
+    (process.env.AUTH_CAPTCHA_ENABLED || "false").toLowerCase() === "true";
+  private readonly captchaFailThreshold = Math.max(
+    1,
+    Number(process.env.AUTH_CAPTCHA_FAIL_THRESHOLD || "3"),
+  );
+  private readonly captchaSharedSecret = (process.env.AUTH_CAPTCHA_SHARED_SECRET || "").trim();
   private readonly adminMfaEnabled =
     (process.env.ADMIN_MFA_ENABLED || "true").toLowerCase() !== "false";
   private readonly mfaTtlSeconds = Math.max(
@@ -166,6 +179,10 @@ export class AuthService {
 
   private getRefreshReuseKey(jti: string): string {
     return `security:auth:refresh-used:${jti}`;
+  }
+
+  private getLockStreakKey(email: string): string {
+    return `security:auth:lock-streak:${email.toLowerCase()}`;
   }
 
   private getMfaChallengeKey(challengeId: string): string {
@@ -417,21 +434,98 @@ export class AuthService {
     });
 
     if (attempts >= this.maxFailedAttempts) {
-      await this.redis.set(lockKey, "1", "EX", this.lockWindowSeconds);
+      const streakKey = this.getLockStreakKey(email);
+      const streak = await this.redis.incr(streakKey);
+      await this.redis.expire(streakKey, 24 * 60 * 60);
+
+      const progressiveSeconds = Math.min(
+        this.lockMaxSeconds,
+        Math.round(this.lockWindowSeconds * this.lockProgressiveMultiplier ** Math.max(0, streak - 1)),
+      );
+
+      await this.redis.set(lockKey, "1", "EX", progressiveSeconds);
       this.securityLogger.log({
         eventType: "auth.account.lockout",
         ip: getClientIp(req),
         result: "blocked",
         metadata: {
           email,
-          lockoutSeconds: this.lockWindowSeconds,
+          lockoutSeconds: progressiveSeconds,
+          streak,
         },
       });
       throw new HttpException(
-        `Too many failed login attempts. Try again in ${Math.ceil(this.lockWindowSeconds / 60)} minute(s).`,
+        `Too many failed login attempts. Try again in ${Math.ceil(progressiveSeconds / 60)} minute(s).`,
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
+  }
+
+  private async isCaptchaRequired(email: string): Promise<boolean> {
+    if (!this.captchaEnabled) return false;
+    await this.ensureRedisConnected();
+    const failCountRaw = await this.redis.get(this.getFailKey(email));
+    const failCount = Number(failCountRaw || "0");
+    return failCount >= this.captchaFailThreshold;
+  }
+
+  private async assertCaptchaIfNeeded(email: string, captchaToken: string | undefined, req: Request) {
+    const required = await this.isCaptchaRequired(email);
+    if (!required) return;
+
+    const token = (captchaToken || "").trim();
+    if (!token) {
+      this.securityLogger.log({
+        eventType: "auth.captcha.required_missing",
+        ip: getClientIp(req),
+        result: "blocked",
+        metadata: { email },
+      });
+      throw new HttpException(
+        {
+          statusCode: 403,
+          message: "CAPTCHA verification required",
+          error: "Forbidden",
+          captchaRequired: true,
+        },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    if (this.captchaSharedSecret) {
+      const expected = Buffer.from(this.captchaSharedSecret);
+      const provided = Buffer.from(token);
+      const valid =
+        expected.length === provided.length && timingSafeEqual(expected, provided);
+
+      if (!valid) {
+        this.securityLogger.log({
+          eventType: "auth.captcha.invalid",
+          ip: getClientIp(req),
+          result: "blocked",
+          metadata: { email },
+        });
+        throw new HttpException(
+          {
+            statusCode: 403,
+            message: "CAPTCHA verification failed",
+            error: "Forbidden",
+            captchaRequired: true,
+          },
+          HttpStatus.FORBIDDEN,
+        );
+      }
+    }
+
+    this.securityLogger.log({
+      eventType: "auth.captcha.passed",
+      ip: getClientIp(req),
+      result: "success",
+      metadata: {
+        email,
+        verificationMode: this.captchaSharedSecret ? "shared-secret" : "presence-only",
+      },
+    });
   }
 
   private async clearFailedLogins(email: string) {
@@ -487,6 +581,7 @@ export class AuthService {
 
   async login(dto: LoginDto, req: Request) {
     await this.assertNotLocked(dto.email, req);
+    await this.assertCaptchaIfNeeded(dto.email, dto.captchaToken, req);
 
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
