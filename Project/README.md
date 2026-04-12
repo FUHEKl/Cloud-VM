@@ -413,6 +413,7 @@ After rebuilding from zero, validate in this order:
 8. VM detail page can open the terminal
 9. AI assistant can create a conversation and answer
 10. admin pages are restricted to admin users
+11. run `python scripts/platform_regression_smoke_test.py` for a non-destructive API regression pass (registration, SSH key CRUD, VM read APIs, terminal route/auth checks)
 
 ## 14) Common failure points
 
