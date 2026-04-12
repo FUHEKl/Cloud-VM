@@ -1,8 +1,18 @@
-import { IsString, IsInt, IsOptional, Min, MinLength } from "class-validator";
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+  MinLength,
+} from "class-validator";
 
 export class CreateVmDto {
   @IsString()
   @MinLength(1)
+  @MaxLength(64)
+  @Matches(/^[a-zA-Z0-9-]+$/)
   name!: string;
 
   @IsInt()
@@ -19,6 +29,8 @@ export class CreateVmDto {
 
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
+  @Matches(/^[^<>]*$/)
   osTemplate!: string;
 
   @IsOptional()

@@ -12,10 +12,38 @@ import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { Client, ClientChannel } from "ssh2";
 import { TerminalTelemetryService } from "./terminal-telemetry.service";
+import { createHash } from "crypto";
 
 interface SshSession {
   sshClient: Client;
   stream: ClientChannel;
+}
+
+function extractCookieValue(rawCookie: string | undefined, cookieName: string): string | undefined {
+  if (!rawCookie) return undefined;
+  const parts = rawCookie.split(";");
+  for (const part of parts) {
+    const [name, ...valueParts] = part.trim().split("=");
+    if (name === cookieName) {
+      return decodeURIComponent(valueParts.join("="));
+    }
+  }
+  return undefined;
+}
+
+function buildSocketFingerprint(client: Socket): string {
+  const ip =
+    (typeof client.handshake.headers["x-forwarded-for"] === "string"
+      ? client.handshake.headers["x-forwarded-for"].split(",")[0].trim()
+      : client.handshake.address || "unknown"
+    ).replace("::ffff:", "");
+  const userAgent =
+    (typeof client.handshake.headers["user-agent"] === "string"
+      ? client.handshake.headers["user-agent"]
+      : "unknown"
+    ).trim();
+
+  return createHash("sha256").update(`${ip}|${userAgent}`).digest("hex");
 }
 
 const terminalCorsOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
@@ -43,10 +71,21 @@ export class TerminalGateway implements OnGatewayDisconnect {
   >();
   private readonly maxInputBytesPerEvent = 4096;
   private readonly maxInputBytesPerSecond = 32768;
+  private readonly maxInputEventsPerSecond = 100;
   private readonly sshConnectTimeoutMs = Math.max(
     5000,
     Number(process.env.TERMINAL_SSH_CONNECT_TIMEOUT_MS ?? 20000),
   );
+  private readonly inputEventWindowStats = new Map<
+    string,
+    { windowStartMs: number; eventsInWindow: number }
+  >();
+  private readonly dangerousInputViolations = new Map<string, number>();
+  private readonly dangerousInputPatterns: RegExp[] = [
+    /rm\s+-rf\s+\/$/i,
+    /dd\s+if=\/dev\/zero/i,
+    /:\(\)\s*\{\s*:\|:&\s*\};:/,
+  ];
 
   constructor(
     private readonly jwtService: JwtService,
@@ -95,19 +134,44 @@ export class TerminalGateway implements OnGatewayDisconnect {
       // Verify JWT from handshake
       const token =
         client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.replace("Bearer ", "");
+        client.handshake.headers?.authorization?.replace("Bearer ", "") ||
+        extractCookieValue(client.handshake.headers?.cookie, "accessToken");
 
       if (!token) {
+        this.logger.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            eventType: "websocket.auth.failure",
+            socketId: client.id,
+            namespace: "terminal",
+            result: "denied",
+            reason: "missing_token",
+          }),
+        );
         this.telemetry.markConnectDenied(client.id, "missing_token", payload.vmId);
         client.emit("error", { message: "Authentication required" });
         client.disconnect();
         return;
       }
 
-      let user: { sub: string; email: string; role: string };
+      let user: { sub: string; email: string; role: string; fp?: string };
       try {
         user = this.jwtService.verify(token);
+        // SECURITY: enforce fingerprint binding for websocket terminal sessions.
+        if (!user.fp || user.fp !== buildSocketFingerprint(client)) {
+          throw new Error("Token fingerprint mismatch");
+        }
       } catch {
+        this.logger.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            eventType: "websocket.auth.failure",
+            socketId: client.id,
+            namespace: "terminal",
+            result: "denied",
+            reason: "invalid_token_or_fingerprint",
+          }),
+        );
         this.telemetry.markConnectDenied(client.id, "invalid_token", payload.vmId);
         client.emit("error", { message: "Invalid or expired token" });
         client.disconnect();
@@ -315,6 +379,32 @@ export class TerminalGateway implements OnGatewayDisconnect {
       return;
     }
 
+    if (!this.allowInputEventRate(client.id)) {
+      this.telemetry.markInputRejected(client.id, "input_event_rate_too_high");
+      client.emit("error", { message: "Too many terminal input events" });
+      this.logger.warn(`SECURITY: terminal event-rate exceeded for socket=${client.id}`);
+      client.disconnect();
+      return;
+    }
+
+    if (this.containsDangerousInput(data)) {
+      const nextViolations = (this.dangerousInputViolations.get(client.id) || 0) + 1;
+      this.dangerousInputViolations.set(client.id, nextViolations);
+      this.logger.warn(
+        `SECURITY: blocked dangerous terminal pattern socket=${client.id} violations=${nextViolations}`,
+      );
+      this.telemetry.markInputRejected(client.id, "dangerous_terminal_pattern_blocked");
+      client.emit("error", {
+        message:
+          "Blocked potentially destructive command pattern. Repeated violations will disconnect this session.",
+      });
+
+      if (nextViolations >= 3) {
+        client.disconnect();
+      }
+      return;
+    }
+
     this.telemetry.addInputBytes(client.id, byteLength);
     session.stream.write(data);
   }
@@ -358,6 +448,27 @@ export class TerminalGateway implements OnGatewayDisconnect {
     return true;
   }
 
+  private allowInputEventRate(clientId: string): boolean {
+    const now = Date.now();
+    const current = this.inputEventWindowStats.get(clientId);
+
+    if (!current || now - current.windowStartMs >= 1000) {
+      this.inputEventWindowStats.set(clientId, {
+        windowStartMs: now,
+        eventsInWindow: 1,
+      });
+      return true;
+    }
+
+    current.eventsInWindow += 1;
+    return current.eventsInWindow <= this.maxInputEventsPerSecond;
+  }
+
+  private containsDangerousInput(data: string): boolean {
+    const normalized = data.trim().replace(/\s+/g, " ");
+    return this.dangerousInputPatterns.some((pattern) => pattern.test(normalized));
+  }
+
   private cleanupSession(clientId: string) {
     const session = this.sessions.get(clientId);
     if (session) {
@@ -366,5 +477,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
       this.sessions.delete(clientId);
     }
     this.inputWindowStats.delete(clientId);
+    this.inputEventWindowStats.delete(clientId);
+    this.dangerousInputViolations.delete(clientId);
   }
 }

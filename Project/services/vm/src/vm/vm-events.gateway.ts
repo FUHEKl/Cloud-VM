@@ -9,6 +9,7 @@ import { Server, Socket } from "socket.io";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { NatsService } from "../nats/nats.service";
+import { createHash } from "crypto";
 
 interface VmStatusPayload {
   vmId: string;
@@ -30,8 +31,40 @@ interface VmSshReadyPayload {
   sshPrivateKey?: string;
 }
 
+function extractCookieValue(rawCookie: string | undefined, cookieName: string): string | undefined {
+  if (!rawCookie) return undefined;
+  const parts = rawCookie.split(";");
+  for (const part of parts) {
+    const [name, ...valueParts] = part.trim().split("=");
+    if (name === cookieName) {
+      return decodeURIComponent(valueParts.join("="));
+    }
+  }
+  return undefined;
+}
+
+function buildSocketFingerprint(client: Socket): string {
+  const ip =
+    (typeof client.handshake.headers["x-forwarded-for"] === "string"
+      ? client.handshake.headers["x-forwarded-for"].split(",")[0].trim()
+      : client.handshake.address || "unknown"
+    ).replace("::ffff:", "");
+  const userAgent =
+    (typeof client.handshake.headers["user-agent"] === "string"
+      ? client.handshake.headers["user-agent"]
+      : "unknown"
+    ).trim();
+  return createHash("sha256").update(`${ip}|${userAgent}`).digest("hex");
+}
+
 @WebSocketGateway({
-  cors: { origin: "*" },
+  cors: {
+    origin: (process.env.CORS_ORIGIN || "http://localhost:3000")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    credentials: true,
+  },
   namespace: "/vm-events",
   path: "/vm-events/socket.io",
 })
@@ -73,10 +106,20 @@ export class VmEventsGateway
     try {
       const token =
         client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.replace("Bearer ", "");
+        client.handshake.headers?.authorization?.replace("Bearer ", "") ||
+        extractCookieValue(client.handshake.headers?.cookie, "accessToken");
 
       if (!token) {
-        this.logger.warn(`Client ${client.id} rejected: no token`);
+        this.logger.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            eventType: "websocket.auth.failure",
+            socketId: client.id,
+            namespace: "vm-events",
+            result: "denied",
+            reason: "missing_token",
+          }),
+        );
         client.disconnect();
         return;
       }
@@ -85,7 +128,13 @@ export class VmEventsGateway
         sub: string;
         email: string;
         role: string;
+        fp?: string;
       };
+
+      // SECURITY: enforce fingerprint binding for websocket VM event sessions.
+      if (!payload.fp || payload.fp !== buildSocketFingerprint(client)) {
+        throw new Error("Token fingerprint mismatch");
+      }
 
       // Join user-specific room so they only receive their own VM updates
       client.join(`user:${payload.sub}`);
@@ -101,7 +150,16 @@ export class VmEventsGateway
         `Client connected: ${client.id} (user: ${payload.sub})`,
       );
     } catch {
-      this.logger.warn(`Client ${client.id} rejected: invalid token`);
+      this.logger.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          eventType: "websocket.auth.failure",
+          socketId: client.id,
+          namespace: "vm-events",
+          result: "denied",
+          reason: "invalid_token",
+        }),
+      );
       client.disconnect();
     }
   }

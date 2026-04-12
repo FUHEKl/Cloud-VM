@@ -43,6 +43,48 @@ def _load_extra_ssh_keys() -> list[str]:
         logger.warning("Could not read extra SSH keys from %s: %s", path, exc)
         return []
 
+
+def _sanitize_ssh_public_keys(keys: list[str]) -> list[str]:
+    """
+    SECURITY: normalize/validate SSH keys before template injection.
+    - Trim trailing spaces/newlines
+    - Allow only known public key prefixes
+    - Reject overly long keys
+    - Deduplicate while preserving order
+    """
+    allowed_prefixes = (
+        "ssh-rsa",
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256",
+    )
+
+    sanitized: list[str] = []
+    seen: set[str] = set()
+
+    for raw in keys:
+        if not isinstance(raw, str):
+            continue
+
+        key = raw.strip()
+        if not key:
+            continue
+
+        if len(key) > 4096:
+            logger.warning("SECURITY: rejected SSH key over max length (4096)")
+            continue
+
+        if not key.startswith(allowed_prefixes):
+            logger.warning("SECURITY: rejected SSH key with unsupported prefix")
+            continue
+
+        if key in seen:
+            continue
+
+        sanitized.append(key)
+        seen.add(key)
+
+    return sanitized
+
 logger = logging.getLogger(__name__)
 
 REDIS_TTL = 86400  # 24 hours
@@ -121,8 +163,7 @@ class VMHandler:
                 ssh_keys.append(generated_ssh_public_key.strip())
                 payload_ssh_key_count = 1
 
-            # Deduplicate while preserving order
-            ssh_keys = [k for k in dict.fromkeys(ssh_keys) if k]
+            ssh_keys = _sanitize_ssh_public_keys(ssh_keys)
             ssh_keys_str = "\n".join(ssh_keys)
 
             logger.info(

@@ -1,8 +1,18 @@
-import { IsString, IsInt, IsNumber, Min, MinLength } from "class-validator";
+import {
+  IsInt,
+  IsNumber,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+  MinLength,
+} from "class-validator";
 
 export class CreatePlanDto {
   @IsString()
   @MinLength(1)
+  @MaxLength(64)
+  @Matches(/^[a-zA-Z0-9- ]+$/)
   name!: string;
 
   @IsInt()

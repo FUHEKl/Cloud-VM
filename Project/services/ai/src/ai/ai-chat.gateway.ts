@@ -12,6 +12,7 @@ import { JwtService } from "@nestjs/jwt";
 import { Server, Socket } from "socket.io";
 import { ChatRequestDto } from "./dto/chat.dto";
 import { AiService } from "./ai.service";
+import { createHash } from "crypto";
 
 interface CurrentUserShape {
   userId: string;
@@ -25,6 +26,32 @@ interface AiChatPayload {
   conversationId?: string;
   includeContext?: boolean;
   images?: string[];
+}
+
+function extractCookieValue(rawCookie: string | undefined, cookieName: string): string | undefined {
+  if (!rawCookie) return undefined;
+  const parts = rawCookie.split(";");
+  for (const part of parts) {
+    const [name, ...valueParts] = part.trim().split("=");
+    if (name === cookieName) {
+      return decodeURIComponent(valueParts.join("="));
+    }
+  }
+  return undefined;
+}
+
+function buildSocketFingerprint(client: Socket): string {
+  const ip =
+    (typeof client.handshake.headers["x-forwarded-for"] === "string"
+      ? client.handshake.headers["x-forwarded-for"].split(",")[0].trim()
+      : client.handshake.address || "unknown"
+    ).replace("::ffff:", "");
+  const userAgent =
+    (typeof client.handshake.headers["user-agent"] === "string"
+      ? client.handshake.headers["user-agent"]
+      : "unknown"
+    ).trim();
+  return createHash("sha256").update(`${ip}|${userAgent}`).digest("hex");
 }
 
 const aiCorsOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
@@ -46,6 +73,11 @@ export class AiChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server!: Server;
 
   private readonly logger = new Logger(AiChatGateway.name);
+  private readonly eventRateWindowStats = new Map<
+    string,
+    { windowStartMs: number; countInWindow: number }
+  >();
+  private readonly maxEventsPerSecond = 2;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -56,10 +88,20 @@ export class AiChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const token =
         client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.replace("Bearer ", "");
+        client.handshake.headers?.authorization?.replace("Bearer ", "") ||
+        extractCookieValue(client.handshake.headers?.cookie, "accessToken");
 
       if (!token) {
-        this.logger.warn(`Client ${client.id} rejected: missing token`);
+        this.logger.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            eventType: "websocket.auth.failure",
+            socketId: client.id,
+            namespace: "ai-chat",
+            result: "denied",
+            reason: "missing_token",
+          }),
+        );
         client.disconnect();
         return;
       }
@@ -68,7 +110,13 @@ export class AiChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         sub: string;
         email: string;
         role: string;
+        fp?: string;
       };
+
+      // SECURITY: enforce fingerprint binding for websocket AI sessions.
+      if (!payload.fp || payload.fp !== buildSocketFingerprint(client)) {
+        throw new Error("Token fingerprint mismatch");
+      }
 
       client.data.user = {
         userId: payload.sub,
@@ -78,12 +126,22 @@ export class AiChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       this.logger.log(`AI socket connected: ${client.id} user=${payload.sub}`);
     } catch {
-      this.logger.warn(`Client ${client.id} rejected: invalid token`);
+      this.logger.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          eventType: "websocket.auth.failure",
+          socketId: client.id,
+          namespace: "ai-chat",
+          result: "denied",
+          reason: "invalid_token",
+        }),
+      );
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
+    this.eventRateWindowStats.delete(client.id);
     this.logger.log(`AI socket disconnected: ${client.id}`);
   }
 
@@ -109,6 +167,25 @@ export class AiChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         requestId,
         message: "Message is required",
       });
+      return;
+    }
+
+    if (!this.allowEventRate(client.id)) {
+      client.emit("ai:error", {
+        requestId,
+        message: "Too many chat messages. Maximum 2 messages per second.",
+      });
+      this.logger.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          eventType: "websocket.rate_limit.hit",
+          socketId: client.id,
+          namespace: "ai-chat",
+          result: "blocked",
+          limit: this.maxEventsPerSecond,
+        }),
+      );
+      client.disconnect();
       return;
     }
 
@@ -147,5 +224,21 @@ export class AiChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         message,
       });
     }
+  }
+
+  private allowEventRate(clientId: string): boolean {
+    const now = Date.now();
+    const current = this.eventRateWindowStats.get(clientId);
+
+    if (!current || now - current.windowStartMs >= 1000) {
+      this.eventRateWindowStats.set(clientId, {
+        windowStartMs: now,
+        countInWindow: 1,
+      });
+      return true;
+    }
+
+    current.countInWindow += 1;
+    return current.countInWindow <= this.maxEventsPerSecond;
   }
 }

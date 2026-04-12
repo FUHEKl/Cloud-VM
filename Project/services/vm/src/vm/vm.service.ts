@@ -17,6 +17,17 @@ import sshpk from "sshpk";
 export class VmService {
   private readonly logger = new Logger(VmService.name);
 
+  private logSecurityEvent(eventType: string, payload: Record<string, unknown>) {
+    // SECURITY: structured audit logging for VM authorization and lifecycle actions.
+    this.logger.log(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        eventType,
+        ...payload,
+      }),
+    );
+  }
+
   private generateVmSshKeyPair() {
     // Use RSA-2048 instead of ed25519 for three reasons:
     //
@@ -98,7 +109,7 @@ export class VmService {
     const maxDiskGb = quota?.maxDiskGb ?? 50;
 
     if (activeVms >= maxVms) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         `VM quota exceeded. Maximum ${maxVms} VMs allowed.`,
       );
     }
@@ -117,17 +128,17 @@ export class VmService {
     const usedDisk = currentUsage._sum.diskGb ?? 0;
 
     if (usedCpu + dto.cpu > maxCpu) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         `CPU quota exceeded. Used: ${usedCpu}, Requested: ${dto.cpu}, Max: ${maxCpu}`,
       );
     }
     if (usedRam + dto.ramMb > maxRamMb) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         `RAM quota exceeded. Used: ${usedRam}MB, Requested: ${dto.ramMb}MB, Max: ${maxRamMb}MB`,
       );
     }
     if (usedDisk + dto.diskGb > maxDiskGb) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         `Disk quota exceeded. Used: ${usedDisk}GB, Requested: ${dto.diskGb}GB, Max: ${maxDiskGb}GB`,
       );
     }
@@ -160,6 +171,13 @@ export class VmService {
       osTemplate: vm.osTemplate,
       userId,
       sshPublicKey: vmKeyPair.publicKeySsh,
+    });
+
+    this.logSecurityEvent("vm.action.queued", {
+      userId,
+      vmId: vm.id,
+      action: "create",
+      result: "success",
     });
 
     // Also publish SSH private key readiness so real-time UI channels can
@@ -247,6 +265,11 @@ export class VmService {
     }
 
     if (role !== "ADMIN" && vm.userId !== userId) {
+      this.logSecurityEvent("vm.permission.denied", {
+        userId,
+        vmId,
+        result: "denied",
+      });
       throw new ForbiddenException("Access denied");
     }
 
@@ -279,6 +302,13 @@ export class VmService {
       userId,
     });
 
+    this.logSecurityEvent("vm.action.queued", {
+      userId,
+      vmId: vm.id,
+      action,
+      result: "success",
+    });
+
     this.logger.log(`Action '${action}' published for VM ${vm.id}`);
 
     return { message: `Action '${action}' queued for VM ${vm.name}` };
@@ -292,6 +322,13 @@ export class VmService {
       vmId: vm.id,
       oneVmId: vm.oneVmId,
       userId,
+    });
+
+    this.logSecurityEvent("vm.action.queued", {
+      userId,
+      vmId: vm.id,
+      action: "delete",
+      result: "success",
     });
 
     this.logger.log(`VM ${vm.id} delete requested (OpenNebula + DB)`);

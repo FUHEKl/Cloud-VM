@@ -10,7 +10,7 @@ import { AiModule } from "./ai/ai.module";
     PrismaModule,
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || "super-secret-key",
+      secret: process.env.JWT_SECRET || "",
       signOptions: { expiresIn: "15m" },
     }),
     AiModule,

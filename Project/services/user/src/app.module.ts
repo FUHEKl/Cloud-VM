@@ -11,7 +11,7 @@ import { JwtStrategy } from "./common/strategies/jwt.strategy";
     PrismaModule,
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || "super-secret-key",
+      secret: process.env.JWT_SECRET || "",
       signOptions: { expiresIn: "15m" },
     }),
     UserModule,

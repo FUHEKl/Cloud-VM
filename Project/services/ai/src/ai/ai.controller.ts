@@ -14,7 +14,6 @@ import { AiService } from "./ai.service";
 import { ChatRequestDto } from "./dto/chat.dto";
 import { ConfirmActionDto } from "./dto/confirm-action.dto";
 import { CreateConversationDto } from "./dto/create-conversation.dto";
-import { AiRateLimitGuard } from "../common/guards/ai-rate-limit.guard";
 
 interface CurrentUserShape {
   userId: string;
@@ -23,7 +22,7 @@ interface CurrentUserShape {
 }
 
 @Controller("ai")
-@UseGuards(JwtAuthGuard, AiRateLimitGuard)
+@UseGuards(JwtAuthGuard)
 export class AiController {
   constructor(private readonly aiService: AiService) {}
 

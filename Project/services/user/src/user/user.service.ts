@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
@@ -13,6 +14,13 @@ import * as bcrypt from "bcrypt";
 @Injectable()
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private assertAdminRole(actorRole?: string) {
+    // SECURITY: Defense in depth — service-level check is independent of gateway.
+    if (actorRole !== "ADMIN") {
+      throw new ForbiddenException("Admin role required");
+    }
+  }
 
   private excludePassword(user: any) {
     const { password, ...userWithoutPassword } = user;
@@ -76,7 +84,13 @@ export class UserService {
     return { message: "Password changed successfully" };
   }
 
-  async findAll(page: number = 1, limit: number = 10, search?: string) {
+  async findAll(
+    page: number = 1,
+    limit: number = 10,
+    search?: string,
+    actorRole?: string,
+  ) {
+    this.assertAdminRole(actorRole);
     const skip = (page - 1) * limit;
 
     const where = search
@@ -109,7 +123,8 @@ export class UserService {
     };
   }
 
-  async findById(id: string) {
+  async findById(id: string, actorRole?: string) {
+    this.assertAdminRole(actorRole);
     const user = await this.prisma.user.findUnique({
       where: { id },
       include: {
@@ -126,7 +141,8 @@ export class UserService {
     return this.excludePassword(user);
   }
 
-  async adminUpdateUser(id: string, dto: AdminUpdateUserDto) {
+  async adminUpdateUser(id: string, dto: AdminUpdateUserDto, actorRole?: string) {
+    this.assertAdminRole(actorRole);
     const user = await this.prisma.user.findUnique({
       where: { id },
     });
@@ -143,7 +159,8 @@ export class UserService {
     return this.excludePassword(updated);
   }
 
-  async deleteUser(id: string) {
+  async deleteUser(id: string, actorRole?: string) {
+    this.assertAdminRole(actorRole);
     const user = await this.prisma.user.findUnique({
       where: { id },
     });
@@ -157,7 +174,8 @@ export class UserService {
     return { message: "User deleted successfully" };
   }
 
-  async getStats() {
+  async getStats(actorRole?: string) {
+    this.assertAdminRole(actorRole);
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 

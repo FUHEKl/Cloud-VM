@@ -5,7 +5,6 @@ import { AiService } from "./ai.service";
 import { AiChatGateway } from "./ai-chat.gateway";
 import { OllamaProvider } from "./providers/ollama.provider";
 import { OpenRouterProvider } from "./providers/openrouter.provider";
-import { AiRateLimitGuard } from "../common/guards/ai-rate-limit.guard";
 
 @Module({
   imports: [
@@ -19,7 +18,6 @@ import { AiRateLimitGuard } from "../common/guards/ai-rate-limit.guard";
     AiChatGateway,
     OllamaProvider,
     OpenRouterProvider,
-    AiRateLimitGuard,
   ],
 })
 export class AiModule {}
