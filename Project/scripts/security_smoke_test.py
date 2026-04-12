@@ -310,6 +310,19 @@ def run_tests(base_url: str) -> Tuple[list[TestResult], int]:
         f"logout_all={st_logout_all}, refresh_after={st_refresh_after}",
     )
 
+    # 11) Host header validation rejects untrusted host values
+    st_bad_host, _, _ = anon.request(
+        "GET",
+        "/health",
+        headers={"Host": "evil.example.com"},
+    )
+    add(
+        "SEC-11",
+        "Untrusted Host header rejected",
+        st_bad_host == 400,
+        f"status={st_bad_host}",
+    )
+
     passed_count = sum(1 for r in results if r.passed)
     return results, passed_count
 

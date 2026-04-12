@@ -46,6 +46,40 @@ function getAllowedOrigins(): string[] {
     .filter(Boolean);
 }
 
+function parseHost(value?: string): string | null {
+  if (!value) return null;
+  const first = value.split(",")[0]?.trim();
+  return first ? first.toLowerCase() : null;
+}
+
+function getTrustedHosts(allowedOrigins: string[]): Set<string> {
+  const hosts = new Set<string>();
+
+  for (const origin of allowedOrigins) {
+    try {
+      hosts.add(new URL(origin).host.toLowerCase());
+    } catch {
+      // Ignore malformed origin values; they are handled by CORS elsewhere.
+    }
+  }
+
+  const extraHosts = (process.env.TRUSTED_HOSTS || "")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const host of extraHosts) {
+    hosts.add(host);
+  }
+
+  hosts.add("localhost");
+  hosts.add("127.0.0.1");
+  hosts.add("localhost:3001");
+  hosts.add("127.0.0.1:3001");
+
+  return hosts;
+}
+
 async function bootstrap() {
   validateJwtSecretsOrThrow();
 
@@ -87,10 +121,27 @@ async function bootstrap() {
   app.getHttpAdapter().getInstance().disable("x-powered-by");
 
   const allowedOrigins = getAllowedOrigins();
+  const trustedHosts = getTrustedHosts(allowedOrigins);
 
   app.enableCors({
     origin: allowedOrigins,
     credentials: true,
+  });
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const host = parseHost(
+      Array.isArray(req.headers["x-forwarded-host"])
+        ? req.headers["x-forwarded-host"][0]
+        : (req.headers["x-forwarded-host"] as string | undefined) || req.headers.host,
+    );
+
+    if (!host || trustedHosts.has(host)) return next();
+
+    return res.status(400).json({
+      statusCode: 400,
+      message: "Invalid host header",
+      error: "Bad Request",
+    });
   });
 
   app.useGlobalPipes(
