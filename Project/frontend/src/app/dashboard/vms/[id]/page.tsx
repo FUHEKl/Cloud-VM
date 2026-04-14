@@ -40,12 +40,28 @@ export default function VmDetailPage() {
     try {
       const { data } = await api.get(`/vms/${id}`);
       setVm(data);
-    } catch {
+    } catch (err: unknown) {
+      const status =
+        typeof err === "object" && err && "response" in err
+          ? (err as { response?: { status?: number } }).response?.status
+          : undefined;
+
+      // SECURITY/UX: prevent direct URL browsing into unauthorized VMs.
+      if (status === 401) {
+        router.replace("/login");
+        return;
+      }
+
+      if (status === 403) {
+        router.replace("/dashboard/vms");
+        return;
+      }
+
       setError("VM not found");
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, router]);
 
   useEffect(() => {
     fetchVm();

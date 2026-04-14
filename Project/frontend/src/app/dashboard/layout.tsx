@@ -91,6 +91,23 @@ const navItems = [
       </svg>
     ),
   },
+  {
+    label: "Billing",
+    href: "/dashboard/billing",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      >
+        <rect x="2" y="5" width="20" height="14" rx="2" />
+        <path d="M2 10h20" />
+        <path d="M7 15h3" />
+      </svg>
+    ),
+  },
 ];
 
 const adminItems = [

@@ -2,56 +2,82 @@ import Link from "next/link";
 
 const plans = [
   {
-    name: "Free",
+    name: "Starter",
     price: "0",
-    period: "forever",
-    description: "Perfect for learning and experimentation",
+    period: "/month",
+    description: "For demos and first-time exploration",
     features: [
       "1 Virtual Machine",
+      "20 VM hours / month",
       "1 vCPU",
       "1 GB RAM",
       "10 GB Disk",
       "Web Terminal Access",
       "Community Support",
     ],
-    cta: "Start Free",
+    cta: "Create Free Account",
+    href: "/register",
     highlighted: false,
     color: "cyan" as const,
   },
   {
-    name: "Pro",
-    price: "2,500",
+    name: "Student",
+    price: "29",
     period: "/month",
-    description: "For students and small projects",
+    description: "For labs, assignments, and semester projects",
     features: [
-      "5 Virtual Machines",
-      "4 vCPU per VM",
-      "8 GB RAM per VM",
-      "100 GB Total Disk",
+      "Up to 2 Virtual Machines",
+      "60 VM hours / month",
+      "2 vCPU per VM",
+      "4 GB RAM per VM",
+      "40 GB Disk per VM",
       "Web Terminal Access",
       "SSH Key Management",
-      "Priority Support",
+      "Email Support",
     ],
-    cta: "Get Started",
+    cta: "Choose Student",
+    href: "/dashboard/billing?plan=student",
     highlighted: true,
     color: "green" as const,
   },
   {
-    name: "Enterprise",
-    price: "10,000",
+    name: "Pro",
+    price: "79",
     period: "/month",
-    description: "For teams and production workloads",
+    description: "For heavier dev/test and team workflows",
     features: [
-      "Unlimited VMs",
-      "16 vCPU per VM",
-      "32 GB RAM per VM",
-      "500 GB Total Disk",
-      "Web Terminal + VNC Access",
+      "Up to 6 Virtual Machines",
+      "220 VM hours / month",
+      "4 vCPU per VM",
+      "8 GB RAM per VM",
+      "120 GB Disk per VM",
+      "Web Terminal Access",
       "SSH Key Management",
       "Dedicated Support",
-      "Custom OS Templates",
+      "Priority Queue",
     ],
-    cta: "Contact Sales",
+    cta: "Choose Pro",
+    href: "/dashboard/billing?plan=pro",
+    highlighted: false,
+    color: "cyan" as const,
+  },
+  {
+    name: "Enterprise",
+    price: "199",
+    period: "/month",
+    description: "For multi-user PFE demos and production-like labs",
+    features: [
+      "Up to 20 Virtual Machines",
+      "900 VM hours / month",
+      "8 vCPU per VM",
+      "16 GB RAM per VM",
+      "400 GB Disk per VM",
+      "Web Terminal + SSH Keys",
+      "SLA-style Support",
+      "Custom Plan Review",
+    ],
+    cta: "Choose Enterprise",
+    href: "/dashboard/billing?plan=enterprise",
     highlighted: false,
     color: "cyan" as const,
   },
@@ -74,7 +100,7 @@ export default function Pricing() {
         </div>
 
         {/* Plans grid */}
-        <div className="grid md:grid-cols-3 gap-6 items-start">
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6 items-start">
           {plans.map((plan) => (
             <div
               key={plan.name}
@@ -104,7 +130,7 @@ export default function Pricing() {
                   {plan.price}
                 </span>
                 <span className="text-cyber-text-dim ml-1">
-                  DZD {plan.period}
+                  DT {plan.period}
                 </span>
               </div>
 
@@ -126,7 +152,7 @@ export default function Pricing() {
               </ul>
 
               <Link
-                href="/register"
+                href={plan.href}
                 className={`block text-center w-full ${
                   plan.highlighted ? "cyber-btn-primary" : "cyber-btn-secondary"
                 }`}
