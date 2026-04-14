@@ -17,6 +17,15 @@ import { createHash } from "crypto";
 interface SshSession {
   sshClient: Client;
   stream: ClientChannel;
+  bastionClient?: Client;
+}
+
+interface BastionConfig {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  privateKey?: string;
 }
 
 function extractCookieValue(rawCookie: string | undefined, cookieName: string): string | undefined {
@@ -96,6 +105,41 @@ export class TerminalGateway implements OnGatewayDisconnect {
       this.logger.error("JWT_SECRET is required for terminal authentication");
       throw new Error("JWT_SECRET is required");
     }
+  }
+
+  private getBastionConfig(): BastionConfig | null {
+    let host = (process.env.TERMINAL_SSH_BASTION_HOST || "").trim();
+    if (!host) {
+      const xmlrpc = (process.env.ONE_XMLRPC || "").trim();
+      if (xmlrpc) {
+        try {
+          host = new URL(xmlrpc).hostname;
+        } catch {
+          // ignore parse issues
+        }
+      }
+    }
+
+    const username =
+      (process.env.TERMINAL_SSH_BASTION_USERNAME || process.env.ONE_USERNAME || "").trim();
+    const password =
+      (process.env.TERMINAL_SSH_BASTION_PASSWORD || process.env.ONE_PASSWORD || "").trim();
+    const privateKey = (process.env.TERMINAL_SSH_BASTION_PRIVATE_KEY || "")
+      .replace(/\\n/g, "\n")
+      .trim();
+    const port = Number(process.env.TERMINAL_SSH_BASTION_PORT || 22);
+
+    if (!host || !username || (!password && !privateKey)) {
+      return null;
+    }
+
+    return {
+      host,
+      port: Number.isFinite(port) && port > 0 ? port : 22,
+      username,
+      password: password || undefined,
+      privateKey: privateKey || undefined,
+    };
   }
 
   handleDisconnect(client: Socket) {
@@ -211,6 +255,9 @@ export class TerminalGateway implements OnGatewayDisconnect {
       }
 
       const sshClient = new Client();
+      let bastionClient: Client | undefined;
+      let hasAttemptedBastionFallback = false;
+      const bastionConfig = this.getBastionConfig();
       const username = payload.username ?? vm.sshUsername ?? "cloudvm";
       let connectTimeout: NodeJS.Timeout | null = null;
 
@@ -219,6 +266,181 @@ export class TerminalGateway implements OnGatewayDisconnect {
           clearTimeout(connectTimeout);
           connectTimeout = null;
         }
+      };
+
+      const tryBastionFallback = (reason: string): boolean => {
+        if (hasAttemptedBastionFallback || !bastionConfig) {
+          return false;
+        }
+        hasAttemptedBastionFallback = true;
+
+        this.logger.warn(
+          `Direct SSH to ${vm.sshHost}:${vm.sshPort ?? 22} failed (${reason}); trying bastion ${bastionConfig.username}@${bastionConfig.host}:${bastionConfig.port}`,
+        );
+
+        try {
+          sshClient.end();
+        } catch {
+          // ignore
+        }
+
+        bastionClient = new Client();
+        const viaBastionClient = new Client();
+
+        viaBastionClient.on("ready", () => {
+          clearConnectTimeout();
+          this.logger.log(
+            `SSH ready via bastion for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) as ${username}`,
+          );
+
+          viaBastionClient.shell(
+            { term: "xterm-256color", cols: 80, rows: 24 },
+            (err, stream) => {
+              if (err) {
+                this.logger.error("Failed to open SSH shell (bastion)", err);
+                this.telemetry.markConnectFailed(client.id, "ssh_shell_open_failed", vm.id, user.sub);
+                client.emit("error", { message: "Failed to open SSH shell" });
+                viaBastionClient.end();
+                bastionClient?.end();
+                return;
+              }
+
+              this.sessions.set(client.id, {
+                sshClient: viaBastionClient,
+                stream,
+                bastionClient,
+              });
+              this.telemetry.markConnectSuccess(client.id, vm.id, user.sub);
+
+              client.emit("connected", {
+                message: `Connected to ${vm.name} (${vm.sshHost}) via bastion`,
+              });
+
+              stream.on("data", (data: Buffer) => {
+                this.telemetry.addOutputBytes(client.id, data.byteLength);
+                client.emit("output", data.toString("utf-8"));
+              });
+
+              stream.stderr.on("data", (data: Buffer) => {
+                this.telemetry.addOutputBytes(client.id, data.byteLength);
+                client.emit("output", data.toString("utf-8"));
+              });
+
+              stream.on("close", () => {
+                this.logger.log(`SSH stream closed for VM ${vm.id} (bastion)`);
+                this.telemetry.markDisconnect(client.id, "ssh_stream_closed");
+                client.emit("disconnected", { message: "SSH session closed" });
+                this.cleanupSession(client.id);
+              });
+            },
+          );
+        });
+
+        viaBastionClient.on("error", (err) => {
+          clearConnectTimeout();
+          this.logger.error(`SSH error via bastion for VM ${vm.id} (${vm.sshHost})`, err.message);
+          this.telemetry.markConnectFailed(client.id, `ssh_error:${err.message}`, vm.id, user.sub);
+          client.emit("error", {
+            message: `SSH via bastion failed: ${err.message}`,
+          });
+          this.cleanupSession(client.id);
+        });
+
+        viaBastionClient.on("close", () => {
+          clearConnectTimeout();
+          this.logger.log(`SSH connection closed for VM ${vm.id} (bastion)`);
+          this.telemetry.markDisconnect(client.id, "ssh_connection_closed");
+          this.cleanupSession(client.id);
+        });
+
+        bastionClient.on("ready", () => {
+          bastionClient?.forwardOut(
+            "127.0.0.1",
+            0,
+            vm.sshHost!,
+            vm.sshPort ?? 22,
+            (err, stream) => {
+              if (err || !stream) {
+                this.logger.error(
+                  `Bastion forwardOut failed for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22})`,
+                  err?.message,
+                );
+                client.emit("error", {
+                  message: `Bastion tunnel failed to ${vm.sshHost}:${vm.sshPort ?? 22}`,
+                });
+                this.cleanupSession(client.id);
+                return;
+              }
+
+              const tunneledConnectOptions: {
+                sock: any;
+                username: string;
+                password?: string;
+                privateKey?: string;
+                readyTimeout: number;
+                keepaliveInterval: number;
+                keepaliveCountMax: number;
+              } = {
+                sock: stream,
+                username,
+                readyTimeout: 30000,
+                keepaliveInterval: 30000,
+                keepaliveCountMax: 5,
+              };
+
+              if (payload.privateKey && payload.privateKey.trim().length > 0) {
+                tunneledConnectOptions.privateKey = payload.privateKey;
+              } else if (payload.password) {
+                tunneledConnectOptions.password = payload.password;
+              }
+
+              viaBastionClient.connect(tunneledConnectOptions);
+            },
+          );
+        });
+
+        bastionClient.on("error", (err) => {
+          clearConnectTimeout();
+          this.logger.error(`Bastion SSH error (${bastionConfig.host})`, err.message);
+          client.emit("error", {
+            message: `Bastion SSH connection failed: ${err.message}`,
+          });
+          this.cleanupSession(client.id);
+        });
+
+        connectTimeout = setTimeout(() => {
+          this.logger.error(
+            `Bastion SSH connect timeout for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) after ${this.sshConnectTimeoutMs}ms`,
+          );
+          this.telemetry.markConnectFailed(client.id, "ssh_connect_timeout_bastion", vm.id, user.sub);
+          client.emit("error", {
+            message: `Timed out reaching ${vm.sshHost}:${vm.sshPort ?? 22} via bastion ${bastionConfig.host}`,
+          });
+          this.cleanupSession(client.id);
+        }, this.sshConnectTimeoutMs);
+
+        const bastionConnectOptions: {
+          host: string;
+          port: number;
+          username: string;
+          password?: string;
+          privateKey?: string;
+          readyTimeout: number;
+        } = {
+          host: bastionConfig.host,
+          port: bastionConfig.port,
+          username: bastionConfig.username,
+          readyTimeout: 15000,
+        };
+
+        if (bastionConfig.privateKey) {
+          bastionConnectOptions.privateKey = bastionConfig.privateKey;
+        } else if (bastionConfig.password) {
+          bastionConnectOptions.password = bastionConfig.password;
+        }
+
+        bastionClient.connect(bastionConnectOptions);
+        return true;
       };
 
       sshClient.on("ready", () => {
@@ -269,6 +491,16 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       sshClient.on("error", (err) => {
         clearConnectTimeout();
+
+        if (
+          (err.message.includes("ECONNREFUSED") ||
+            err.message.includes("ETIMEDOUT") ||
+            err.message.includes("Timed out")) &&
+          tryBastionFallback(err.message)
+        ) {
+          return;
+        }
+
         this.logger.error(`SSH error for VM ${vm.id} (${vm.sshHost})`, err.message);
         this.telemetry.markConnectFailed(client.id, `ssh_error:${err.message}`, vm.id, user.sub);
 
@@ -324,6 +556,11 @@ export class TerminalGateway implements OnGatewayDisconnect {
         this.logger.error(
           `SSH connect timeout for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) after ${this.sshConnectTimeoutMs}ms`,
         );
+
+        if (tryBastionFallback("direct_connect_timeout")) {
+          return;
+        }
+
         this.telemetry.markConnectFailed(client.id, "ssh_connect_timeout", vm.id, user.sub);
         client.emit("error", {
           message:
@@ -474,6 +711,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
     if (session) {
       try { session.stream?.close(); }   catch { /* ignore */ }
       try { session.sshClient?.end(); }  catch { /* ignore */ }
+      try { session.bastionClient?.end(); } catch { /* ignore */ }
       this.sessions.delete(clientId);
     }
     this.inputWindowStats.delete(clientId);
