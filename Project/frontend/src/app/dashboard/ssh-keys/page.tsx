@@ -13,6 +13,8 @@ export default function SshKeysPage() {
   const [submitting, setSubmitting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const [showDownloadConfirm, setShowDownloadConfirm] = useState(false);
+  const [downloadedKeyFilename, setDownloadedKeyFilename] = useState("");
 
   const downloadPrivateKey = (filename: string, privateKey: string) => {
     const blob = new Blob([privateKey], { type: "application/x-pem-file" });
@@ -79,11 +81,9 @@ export default function SshKeysPage() {
 
       if (data?.privateKey && data?.filename) {
         downloadPrivateKey(data.filename, data.privateKey);
+        setDownloadedKeyFilename(data.filename);
+        setShowDownloadConfirm(true);
       }
-
-      alert(
-        "SSH key generated and saved. Your private key download has started — keep it safe, it will not be shown again.",
-      );
       await loadKeys();
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Failed to generate SSH key"));
@@ -287,6 +287,36 @@ export default function SshKeysPage() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {showDownloadConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-lg cyber-card border border-cyber-cyan/30">
+            <h3 className="text-lg font-semibold text-cyber-text mb-2">
+              Save your private key now
+            </h3>
+            <p className="text-sm text-cyber-text-dim mb-3">
+              Your key was generated and the private key download started.
+              This file is shown only once for security.
+            </p>
+            <div className="text-xs font-mono text-cyber-cyan/90 bg-cyber-cyan/10 border border-cyber-cyan/20 rounded-lg px-3 py-2 mb-4 break-all">
+              {downloadedKeyFilename}
+            </div>
+            <ul className="text-sm text-cyber-text-dim list-disc pl-5 space-y-1 mb-5">
+              <li>Store it in a secure place (password manager or encrypted folder).</li>
+              <li>Never share it and never upload it anywhere.</li>
+              <li>If lost, generate a new key and delete the old one.</li>
+            </ul>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDownloadConfirm(false)}
+                className="cyber-btn-primary !py-2.5"
+              >
+                I downloaded it
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
