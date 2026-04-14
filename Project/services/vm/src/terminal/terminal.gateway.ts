@@ -78,9 +78,19 @@ export class TerminalGateway implements OnGatewayDisconnect {
     string,
     { windowStartMs: number; bytesInWindow: number }
   >();
+  private readonly commandBuffers = new Map<string, string>();
   private readonly maxInputBytesPerEvent = 4096;
   private readonly maxInputBytesPerSecond = 32768;
   private readonly maxInputEventsPerSecond = 100;
+  private readonly maxCommandBufferChars = 8192;
+  private readonly dangerousInputMode: "block" | "audit" =
+    ((process.env.TERMINAL_DANGEROUS_INPUT_MODE || "block").trim().toLowerCase() === "audit"
+      ? "audit"
+      : "block");
+  private readonly dangerousInputMaxViolations = Math.max(
+    1,
+    Number(process.env.TERMINAL_DANGEROUS_INPUT_MAX_VIOLATIONS || "3"),
+  );
   private readonly allowPasswordFallback = (() => {
     const configured = (process.env.TERMINAL_ALLOW_PASSWORD_FALLBACK || "").trim().toLowerCase();
     if (configured === "true") return true;
@@ -98,7 +108,10 @@ export class TerminalGateway implements OnGatewayDisconnect {
   private readonly dangerousInputViolations = new Map<string, number>();
   private readonly dangerousInputPatterns: RegExp[] = [
     /rm\s+-rf\s+\/$/i,
-    /dd\s+if=\/dev\/zero/i,
+    /dd\s+if=\/dev\/(zero|urandom).+of=\/dev\//i,
+    /mkfs(\.[a-z0-9]+)?\s+/i,
+    /(^|\s)(shutdown|reboot|poweroff)\b/i,
+    /\bcurl\b.+\|\s*(sh|bash|zsh)\b/i,
     /:\(\)\s*\{\s*:\|:&\s*\};:/,
   ];
 
@@ -761,21 +774,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
       return;
     }
 
-    if (this.containsDangerousInput(data)) {
-      const nextViolations = (this.dangerousInputViolations.get(client.id) || 0) + 1;
-      this.dangerousInputViolations.set(client.id, nextViolations);
-      this.logger.warn(
-        `SECURITY: blocked dangerous terminal pattern socket=${client.id} violations=${nextViolations}`,
-      );
-      this.telemetry.markInputRejected(client.id, "dangerous_terminal_pattern_blocked");
-      client.emit("error", {
-        message:
-          "Blocked potentially destructive command pattern. Repeated violations will disconnect this session.",
-      });
-
-      if (nextViolations >= 3) {
-        client.disconnect();
-      }
+    if (!this.inspectSubmittedCommands(client, data)) {
       return;
     }
 
@@ -838,9 +837,51 @@ export class TerminalGateway implements OnGatewayDisconnect {
     return current.eventsInWindow <= this.maxInputEventsPerSecond;
   }
 
-  private containsDangerousInput(data: string): boolean {
-    const normalized = data.trim().replace(/\s+/g, " ");
-    return this.dangerousInputPatterns.some((pattern) => pattern.test(normalized));
+  private inspectSubmittedCommands(client: Socket, data: string): boolean {
+    const previousTail = this.commandBuffers.get(client.id) || "";
+    let combined = previousTail + data;
+
+    if (combined.length > this.maxCommandBufferChars) {
+      combined = combined.slice(-this.maxCommandBufferChars);
+    }
+
+    const segments = combined.split(/\r?\n/);
+    const tail = segments.pop() || "";
+    this.commandBuffers.set(client.id, tail.slice(-this.maxCommandBufferChars));
+
+    for (const segment of segments) {
+      const candidate = segment.trim();
+      if (!candidate) continue;
+
+      const normalized = candidate.replace(/\s+/g, " ");
+      const matchedPattern = this.dangerousInputPatterns.find((pattern) => pattern.test(normalized));
+      if (!matchedPattern) continue;
+
+      const nextViolations = (this.dangerousInputViolations.get(client.id) || 0) + 1;
+      this.dangerousInputViolations.set(client.id, nextViolations);
+
+      const safePreview = normalized.slice(0, 120);
+      this.logger.warn(
+        `SECURITY: dangerous terminal command detected mode=${this.dangerousInputMode} socket=${client.id} violations=${nextViolations} command=\"${safePreview}\"`,
+      );
+
+      if (this.dangerousInputMode === "audit") {
+        continue;
+      }
+
+      this.telemetry.markInputRejected(client.id, "dangerous_terminal_pattern_blocked");
+      client.emit("error", {
+        message:
+          "Blocked potentially destructive command pattern. Repeated violations will disconnect this session.",
+      });
+
+      if (nextViolations >= this.dangerousInputMaxViolations) {
+        client.disconnect();
+      }
+      return false;
+    }
+
+    return true;
   }
 
   private cleanupSession(clientId: string) {
@@ -854,5 +895,6 @@ export class TerminalGateway implements OnGatewayDisconnect {
     this.inputWindowStats.delete(clientId);
     this.inputEventWindowStats.delete(clientId);
     this.dangerousInputViolations.delete(clientId);
+    this.commandBuffers.delete(clientId);
   }
 }
