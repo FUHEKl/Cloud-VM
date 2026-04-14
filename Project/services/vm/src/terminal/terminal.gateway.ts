@@ -257,8 +257,10 @@ export class TerminalGateway implements OnGatewayDisconnect {
       const sshClient = new Client();
       let bastionClient: Client | undefined;
       let hasAttemptedBastionFallback = false;
+      let hasAttemptedPasswordRetry = false;
       const bastionConfig = this.getBastionConfig();
       const username = payload.username ?? vm.sshUsername ?? "cloudvm";
+      const defaultVmPassword = (process.env.TERMINAL_DEFAULT_VM_PASSWORD || "cloudvm123").trim();
       let connectTimeout: NodeJS.Timeout | null = null;
 
       const clearConnectTimeout = () => {
@@ -390,6 +392,11 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
               if (payload.privateKey && payload.privateKey.trim().length > 0) {
                 tunneledConnectOptions.privateKey = payload.privateKey;
+                if (username === "cloudvm" && defaultVmPassword) {
+                  // Reliability fallback: when key auth fails due delayed/partial key setup,
+                  // also allow password auth on the same attempt for the default cloudvm user.
+                  tunneledConnectOptions.password = payload.password || defaultVmPassword;
+                }
               } else if (payload.password) {
                 tunneledConnectOptions.password = payload.password;
               }
@@ -443,6 +450,118 @@ export class TerminalGateway implements OnGatewayDisconnect {
         return true;
       };
 
+      const tryPasswordOnlyRetry = (reason: string): boolean => {
+        const candidatePassword = payload.password || defaultVmPassword;
+        if (
+          hasAttemptedPasswordRetry ||
+          !payload.privateKey ||
+          !candidatePassword ||
+          username !== "cloudvm"
+        ) {
+          return false;
+        }
+
+        hasAttemptedPasswordRetry = true;
+        this.logger.warn(
+          `SSH key authentication failed (${reason}); retrying password-only for ${username}@${vm.sshHost}:${vm.sshPort ?? 22}`,
+        );
+
+        try {
+          sshClient.end();
+        } catch {
+          // ignore
+        }
+
+        const retryClient = new Client();
+
+        retryClient.on("ready", () => {
+          clearConnectTimeout();
+          this.logger.log(
+            `SSH ready (password retry) for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) as ${username}`,
+          );
+
+          retryClient.shell(
+            { term: "xterm-256color", cols: 80, rows: 24 },
+            (err, stream) => {
+              if (err) {
+                this.logger.error("Failed to open SSH shell (password retry)", err);
+                this.telemetry.markConnectFailed(client.id, "ssh_shell_open_failed", vm.id, user.sub);
+                client.emit("error", { message: "Failed to open SSH shell" });
+                retryClient.end();
+                return;
+              }
+
+              this.sessions.set(client.id, { sshClient: retryClient, stream });
+              this.telemetry.markConnectSuccess(client.id, vm.id, user.sub);
+
+              client.emit("connected", {
+                message: `Connected to ${vm.name} (${vm.sshHost})`,
+              });
+
+              stream.on("data", (data: Buffer) => {
+                this.telemetry.addOutputBytes(client.id, data.byteLength);
+                client.emit("output", data.toString("utf-8"));
+              });
+
+              stream.stderr.on("data", (data: Buffer) => {
+                this.telemetry.addOutputBytes(client.id, data.byteLength);
+                client.emit("output", data.toString("utf-8"));
+              });
+
+              stream.on("close", () => {
+                this.logger.log(`SSH stream closed for VM ${vm.id}`);
+                this.telemetry.markDisconnect(client.id, "ssh_stream_closed");
+                client.emit("disconnected", { message: "SSH session closed" });
+                this.cleanupSession(client.id);
+              });
+            },
+          );
+        });
+
+        retryClient.on("error", (retryErr) => {
+          clearConnectTimeout();
+          this.logger.error(
+            `SSH error after password retry for VM ${vm.id} (${vm.sshHost})`,
+            retryErr.message,
+          );
+          this.telemetry.markConnectFailed(client.id, `ssh_error:${retryErr.message}`, vm.id, user.sub);
+          client.emit("error", {
+            message: `SSH authentication failed at ${vm.sshHost}. Password retry also failed.`,
+          });
+          this.cleanupSession(client.id);
+        });
+
+        retryClient.on("close", () => {
+          clearConnectTimeout();
+          this.logger.log(`SSH connection closed for VM ${vm.id} (password retry)`);
+          this.telemetry.markDisconnect(client.id, "ssh_connection_closed");
+          this.cleanupSession(client.id);
+        });
+
+        connectTimeout = setTimeout(() => {
+          this.logger.error(
+            `SSH password-retry timeout for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) after ${this.sshConnectTimeoutMs}ms`,
+          );
+          this.telemetry.markConnectFailed(client.id, "ssh_connect_timeout_password_retry", vm.id, user.sub);
+          client.emit("error", {
+            message: `Timed out reaching ${vm.sshHost}:${vm.sshPort ?? 22} during password retry.`,
+          });
+          this.cleanupSession(client.id);
+        }, this.sshConnectTimeoutMs);
+
+        retryClient.connect({
+          host: vm.sshHost || undefined,
+          port: vm.sshPort ?? 22,
+          username,
+          password: candidatePassword,
+          readyTimeout: 30000,
+          keepaliveInterval: 30000,
+          keepaliveCountMax: 5,
+        });
+
+        return true;
+      };
+
       sshClient.on("ready", () => {
         clearConnectTimeout();
         this.logger.log(
@@ -491,6 +610,13 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       sshClient.on("error", (err) => {
         clearConnectTimeout();
+
+        if (
+          (err.message.includes("Authentication") || err.message.includes("auth")) &&
+          tryPasswordOnlyRetry(err.message)
+        ) {
+          return;
+        }
 
         if (
           (err.message.includes("ECONNREFUSED") ||
@@ -571,6 +697,10 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       if (payload.privateKey && payload.privateKey.trim().length > 0) {
         connectOptions.privateKey = payload.privateKey;
+        if (username === "cloudvm" && defaultVmPassword) {
+          // Reliability fallback for dev/lab templates that may race key injection.
+          connectOptions.password = payload.password || defaultVmPassword;
+        }
       } else if (payload.password) {
         connectOptions.password = payload.password;
       } else {
