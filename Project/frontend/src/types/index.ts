@@ -22,6 +22,31 @@ export interface User {
   updatedAt: string;
 }
 
+export type SubscriptionPlanId = "student" | "pro" | "enterprise" | "unlimited";
+
+export interface UsageSnapshot {
+  vmCount: number;
+  cpuUsed: number;
+  ramMbUsed: number;
+  diskGbUsed: number;
+}
+
+export interface SubscriptionSnapshot {
+  planId: SubscriptionPlanId;
+  cycleStartedAt: string;
+  cycleEndsAt: string;
+  vmHoursIncluded: number;
+  vmHoursUsed: number;
+  vmHoursRemaining: number;
+  canRenewSamePlan: boolean;
+}
+
+export interface UserProfileDetails extends User {
+  quota?: UserQuota;
+  usage?: UsageSnapshot;
+  subscription?: SubscriptionSnapshot;
+}
+
 export interface AuthTokens {
   accessToken: string;
   refreshToken: string;

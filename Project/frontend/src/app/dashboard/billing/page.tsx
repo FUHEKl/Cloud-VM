@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
 import { useAuth } from "@/lib/auth";
+import type { SubscriptionPlanId, UserProfileDetails } from "@/types";
 
 type PlanId = "student" | "pro" | "enterprise";
 
@@ -54,6 +55,7 @@ export default function BillingPage() {
   const [error, setError] = useState("");
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
+  const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
 
   const orderedPlans = useMemo(() => {
     if (!preferredPlan) return plans;
@@ -74,9 +76,56 @@ export default function BillingPage() {
     }
   }, []);
 
+  const loadProfileDetails = useCallback(async () => {
+    try {
+      const { data } = await api.get<UserProfileDetails>("/users/profile");
+      setProfileDetails(data);
+    } catch {
+      // optional panel data
+    }
+  }, []);
+
   useEffect(() => {
     void loadPayments();
-  }, [loadPayments, status]);
+    void loadProfileDetails();
+  }, [loadPayments, loadProfileDetails, status]);
+
+  const planRank: Record<SubscriptionPlanId, number> = {
+    student: 1,
+    pro: 2,
+    enterprise: 3,
+    unlimited: 99,
+  };
+
+  const activePlan = profileDetails?.subscription?.planId;
+  const canRenewSamePlan = profileDetails?.subscription?.canRenewSamePlan ?? true;
+
+  const isPlanSelectable = (planId: PlanId) => {
+    if (!activePlan || activePlan === "unlimited") return true;
+
+    const requestedRank = planRank[planId];
+    const currentRank = planRank[activePlan];
+
+    if (requestedRank > currentRank) return true;
+    if (requestedRank === currentRank) return canRenewSamePlan;
+    return false;
+  };
+
+  const planBlockReason = (planId: PlanId) => {
+    if (!activePlan || activePlan === "unlimited") return "";
+    const requestedRank = planRank[planId];
+    const currentRank = planRank[activePlan];
+
+    if (requestedRank < currentRank) {
+      return "Downgrades are locked during an active billing cycle.";
+    }
+
+    if (requestedRank === currentRank && !canRenewSamePlan) {
+      return "Same plan renewal is locked until cycle end or VM hours are consumed.";
+    }
+
+    return "";
+  };
 
   useEffect(() => {
     if (status !== "success") return;
@@ -151,6 +200,15 @@ export default function BillingPage() {
         </div>
       )}
 
+      {profileDetails?.subscription && !isAdmin && (
+        <div className="px-4 py-3 rounded-lg bg-cyber-cyan/10 border border-cyber-cyan/30 text-cyber-text text-sm">
+          <span className="font-medium text-cyber-cyan uppercase">{profileDetails.subscription.planId}</span>
+          {" "}plan · VM hours used: {profileDetails.subscription.vmHoursUsed.toFixed(2)} / {profileDetails.subscription.vmHoursIncluded}
+          {" "}· Remaining: {profileDetails.subscription.vmHoursRemaining.toFixed(2)}
+          {" "}· Cycle ends: {new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}
+        </div>
+      )}
+
       {!isAdmin && (
         <div className="grid md:grid-cols-3 gap-4">
           {orderedPlans.map((plan) => (
@@ -164,11 +222,16 @@ export default function BillingPage() {
               </ul>
               <button
                 onClick={() => startCheckout(plan.id)}
-                disabled={loadingPlan !== null}
+                disabled={loadingPlan !== null || !isPlanSelectable(plan.id)}
                 className="cyber-btn-primary w-full disabled:opacity-50"
               >
                 {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.dt} DT`}
               </button>
+              {!isPlanSelectable(plan.id) && (
+                <p className="text-xs text-cyber-orange mt-2">
+                  {planBlockReason(plan.id)}
+                </p>
+              )}
             </div>
           ))}
         </div>

@@ -5,7 +5,7 @@ import Link from "next/link";
 import api from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/error";
-import type { VmStats, VirtualMachine } from "@/types";
+import type { UserProfileDetails, VmStats, VirtualMachine } from "@/types";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -17,6 +17,7 @@ export default function DashboardPage() {
     error: 0,
   });
   const [recentVms, setRecentVms] = useState<VirtualMachine[]>([]);
+  const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>("");
 
@@ -24,9 +25,10 @@ export default function DashboardPage() {
     setLoadError("");
     setLoading(true);
 
-    const [statsRes, vmsRes] = await Promise.allSettled([
+    const [statsRes, vmsRes, profileRes] = await Promise.allSettled([
       api.get("/vms/stats"),
       api.get("/vms?limit=5"),
+      api.get("/users/profile"),
     ]);
 
     if (statsRes.status === "fulfilled") {
@@ -40,6 +42,10 @@ export default function DashboardPage() {
           ? vmData.slice(0, 5)
           : vmData.data?.slice(0, 5) || [],
       );
+    }
+
+    if (profileRes.status === "fulfilled") {
+      setProfileDetails(profileRes.value.data as UserProfileDetails);
     }
 
     if (statsRes.status === "rejected" || vmsRes.status === "rejected") {
@@ -190,6 +196,50 @@ export default function DashboardPage() {
           </div>
         ))}
       </div>
+
+      {profileDetails?.usage && profileDetails?.subscription && (
+        <div className="grid md:grid-cols-2 gap-4 mb-8">
+          <div className="cyber-card">
+            <h3 className="text-sm font-semibold text-cyber-text mb-3">Resource Usage (current)</h3>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-cyber-text-dim">CPU in use</p>
+                <p className="text-cyber-text font-semibold">{profileDetails.usage.cpuUsed} vCPU</p>
+              </div>
+              <div>
+                <p className="text-cyber-text-dim">RAM in use</p>
+                <p className="text-cyber-text font-semibold">{(profileDetails.usage.ramMbUsed / 1024).toFixed(2)} GB</p>
+              </div>
+              <div>
+                <p className="text-cyber-text-dim">Disk in use</p>
+                <p className="text-cyber-text font-semibold">{profileDetails.usage.diskGbUsed} GB</p>
+              </div>
+              <div>
+                <p className="text-cyber-text-dim">VM count</p>
+                <p className="text-cyber-text font-semibold">{profileDetails.usage.vmCount}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="cyber-card">
+            <h3 className="text-sm font-semibold text-cyber-text mb-3">Plan Consumption</h3>
+            <div className="space-y-2 text-sm">
+              <p>
+                Plan: <span className="text-cyber-cyan uppercase font-semibold">{profileDetails.subscription.planId}</span>
+              </p>
+              <p>
+                VM hours used: <span className="text-cyber-text font-semibold">{profileDetails.subscription.vmHoursUsed.toFixed(2)}</span>
+              </p>
+              <p>
+                VM hours remaining: <span className="text-cyber-green font-semibold">{profileDetails.subscription.vmHoursRemaining.toFixed(2)}</span>
+              </p>
+              <p>
+                Cycle ends: <span className="text-cyber-text">{new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Quick Actions + Recent VMs */}
       <div className="grid lg:grid-cols-3 gap-6">

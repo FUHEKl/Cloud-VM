@@ -21,10 +21,10 @@ export class PaymentController {
   @Post("checkout-session")
   @UseGuards(JwtAuthGuard)
   async createCheckoutSession(
-    @CurrentUser() user: { userId: string },
+    @CurrentUser() user: { userId: string; role: string },
     @Body() dto: CreateCheckoutSessionDto,
   ) {
-    return this.paymentService.createCheckoutSession(user.userId, dto.planId);
+    return this.paymentService.createCheckoutSession(user.userId, user.role, dto.planId);
   }
 
   @Get("me")

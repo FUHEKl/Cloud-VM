@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
 import MfaSettingsPanel from "@/components/auth/MfaSettingsPanel";
+import type { UserProfileDetails } from "@/types";
 
 export default function ProfilePage() {
   const { user, fetchUser } = useAuth();
@@ -20,6 +21,7 @@ export default function ProfilePage() {
   });
   const [profileMsg, setProfileMsg] = useState({ type: "", text: "" });
   const [passwordMsg, setPasswordMsg] = useState({ type: "", text: "" });
+  const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
   const [saving, setSaving] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
 
@@ -30,6 +32,19 @@ export default function ProfilePage() {
       email: user?.email || "",
     });
   }, [user?.firstName, user?.lastName, user?.email]);
+
+  useEffect(() => {
+    const loadDetails = async () => {
+      try {
+        const { data } = await api.get<UserProfileDetails>("/users/profile");
+        setProfileDetails(data);
+      } catch {
+        // optional section
+      }
+    };
+
+    void loadDetails();
+  }, []);
 
   const handleProfileUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -248,6 +263,40 @@ export default function ProfilePage() {
           </button>
         </form>
       </div>
+
+      {profileDetails?.usage && profileDetails?.subscription && (
+        <div className="cyber-card mt-6">
+          <h2 className="text-lg font-semibold text-cyber-text mb-4">
+            Subscription & Usage
+          </h2>
+
+          <div className="grid md:grid-cols-2 gap-4 text-sm">
+            <div className="p-3 rounded-lg border border-cyber-border bg-cyber-bg-soft/30">
+              <p className="text-cyber-text-dim mb-2">Resource usage</p>
+              <p>CPU in use: <span className="text-cyber-text font-semibold">{profileDetails.usage.cpuUsed} vCPU</span></p>
+              <p>RAM in use: <span className="text-cyber-text font-semibold">{(profileDetails.usage.ramMbUsed / 1024).toFixed(2)} GB</span></p>
+              <p>Disk in use: <span className="text-cyber-text font-semibold">{profileDetails.usage.diskGbUsed} GB</span></p>
+              <p>VM count: <span className="text-cyber-text font-semibold">{profileDetails.usage.vmCount}</span></p>
+            </div>
+
+            <div className="p-3 rounded-lg border border-cyber-border bg-cyber-bg-soft/30">
+              <p className="text-cyber-text-dim mb-2">Plan consumption</p>
+              <p>
+                Active plan: <span className="text-cyber-cyan font-semibold uppercase">{profileDetails.subscription.planId}</span>
+              </p>
+              <p>
+                VM hours used: <span className="text-cyber-text font-semibold">{profileDetails.subscription.vmHoursUsed.toFixed(2)}</span>
+              </p>
+              <p>
+                VM hours remaining: <span className="text-cyber-green font-semibold">{profileDetails.subscription.vmHoursRemaining.toFixed(2)}</span>
+              </p>
+              <p>
+                Cycle ends: <span className="text-cyber-text">{new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
