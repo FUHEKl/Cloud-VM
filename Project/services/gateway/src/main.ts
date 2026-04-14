@@ -52,6 +52,14 @@ function parseHost(value?: string): string | null {
   return first ? first.toLowerCase() : null;
 }
 
+function parseSingleHeader(value: string | string[] | undefined): string | null {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    return value[0]?.trim() || null;
+  }
+  return value.trim() || null;
+}
+
 function getTrustedHosts(allowedOrigins: string[]): Set<string> {
   const hosts = new Set<string>();
 
@@ -122,6 +130,7 @@ async function bootstrap() {
 
   const allowedOrigins = getAllowedOrigins();
   const trustedHosts = getTrustedHosts(allowedOrigins);
+  const edgeProxyToken = (process.env.EDGE_PROXY_TOKEN || "").trim();
 
   app.enableCors({
     origin: allowedOrigins,
@@ -129,6 +138,29 @@ async function bootstrap() {
   });
 
   app.use((req: Request, res: Response, next: NextFunction) => {
+    const forwardedProto = parseSingleHeader(req.headers["x-forwarded-proto"]);
+    const edgeToken = parseSingleHeader(req.headers["x-edge-token"]);
+
+    // SECURITY: requests coming through the public edge must indicate HTTPS.
+    if (forwardedProto && forwardedProto !== "https") {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Invalid forwarded proto",
+        error: "Bad Request",
+      });
+    }
+
+    // SECURITY: optional shared secret to reject direct gateway access bypassing edge.
+    if (edgeProxyToken) {
+      if (!edgeToken || edgeToken !== edgeProxyToken) {
+        return res.status(403).json({
+          statusCode: 403,
+          message: "Edge verification failed",
+          error: "Forbidden",
+        });
+      }
+    }
+
     const host = parseHost(
       Array.isArray(req.headers["x-forwarded-host"])
         ? req.headers["x-forwarded-host"][0]
@@ -184,6 +216,13 @@ async function bootstrap() {
     typeof aiChatUpgrade === "function"
   ) {
     httpServer.on("upgrade", (req: any, socket: any, head: any) => {
+      const edgeToken = parseSingleHeader(req.headers?.["x-edge-token"]);
+      if (edgeProxyToken && edgeToken !== edgeProxyToken) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
       const url: string = req.url ?? "";
       if (url.startsWith("/terminal/") && typeof terminalUpgrade === "function") {
         terminalUpgrade(req, socket, head);

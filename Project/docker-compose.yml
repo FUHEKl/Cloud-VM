@@ -65,6 +65,7 @@ services:
       - VM_SERVICE_URL=http://vm:3004
       - AI_SERVICE_URL=http://ai:3006
       - PAYMENT_SERVICE_URL=http://payment:3005
+      - EDGE_PROXY_TOKEN=${EDGE_PROXY_TOKEN:-edge-local-dev-token-change-me}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - REDIS_HOST=redis
@@ -75,6 +76,27 @@ services:
       - user
       - vm
       - ai
+      - payment
+
+  # ── Payment Service ──────────────────────────────
+  payment:
+    build:
+      context: ./services/payment
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3005"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - CORS_ORIGIN=${CORS_ORIGIN}
+      - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:-https://localhost}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ── Auth Service ─────────────────────────────────
   auth:
@@ -197,6 +219,7 @@ services:
       - ONE_USERNAME=${ONE_USERNAME}
       - ONE_PASSWORD=${ONE_PASSWORD}
       - ONE_IP_OFFSET=${ONE_IP_OFFSET:-0}
+      - INJECT_EXTRA_SSH_KEYS=${INJECT_EXTRA_SSH_KEYS:-false}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}
       - EXTRA_SSH_KEYS_FILE=/app/extra_ssh_keys.txt
     volumes:

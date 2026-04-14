@@ -14,6 +14,7 @@ import { TerminalApiProxyMiddleware } from "./middlewares/terminal-api-proxy.mid
 import { VmEventsProxyMiddleware } from "./middlewares/vm-events-proxy.middleware";
 import { AiProxyMiddleware } from "./middlewares/ai-proxy.middleware";
 import { AiChatProxyMiddleware } from "./middlewares/ai-chat-proxy.middleware";
+import { PaymentProxyMiddleware } from "./middlewares/payment-proxy.middleware";
 import { RedisRateLimitMiddleware } from "../security/redis-rate-limit.middleware";
 
 @Module({})
@@ -52,6 +53,13 @@ export class ProxyModule implements NestModule {
       .forRoutes(
         { path: "api/plans", method: RequestMethod.ALL },
         { path: "api/plans/*", method: RequestMethod.ALL },
+      );
+
+    consumer
+      .apply(RedisRateLimitMiddleware, PaymentProxyMiddleware)
+      .forRoutes(
+        { path: "api/payments", method: RequestMethod.ALL },
+        { path: "api/payments/*", method: RequestMethod.ALL },
       );
 
     consumer
