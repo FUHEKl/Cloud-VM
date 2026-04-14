@@ -4,8 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import api from "@/lib/api";
 import clsx from "clsx";
 import AssistantChat from "@/components/assistant/AssistantChat";
+import type { UserProfileDetails } from "@/types";
 
 const navItems = [
   {
@@ -158,6 +160,7 @@ export default function DashboardLayout({
   const { user, isLoading, isAuthenticated, fetchUser, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
   const isAssistantRoute = pathname?.startsWith("/dashboard/assistant");
 
   useEffect(() => {
@@ -175,6 +178,21 @@ export default function DashboardLayout({
       setAssistantOpen(false);
     }
   }, [isAssistantRoute, assistantOpen]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const loadProfileDetails = async () => {
+      try {
+        const { data } = await api.get<UserProfileDetails>("/users/profile");
+        setProfileDetails(data);
+      } catch {
+        // optional widget data
+      }
+    };
+
+    void loadProfileDetails();
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return (
@@ -219,6 +237,19 @@ export default function DashboardLayout({
     await logout();
     window.location.assign("/login");
   };
+
+  const subscription = profileDetails?.subscription;
+  const usagePercent =
+    subscription && subscription.vmHoursIncluded > 0
+      ? Math.min(100, (subscription.vmHoursUsed / subscription.vmHoursIncluded) * 100)
+      : 0;
+
+  const usageTone =
+    usagePercent >= 90
+      ? "bg-cyber-red"
+      : usagePercent >= 75
+        ? "bg-cyber-orange"
+        : "bg-cyber-green";
 
   return (
     <div className="min-h-screen flex">
@@ -297,6 +328,24 @@ export default function DashboardLayout({
               </div>
             </div>
           </div>
+
+          {subscription && subscription.planId !== "unlimited" && (
+            <div className="mb-3 p-2 rounded-lg border border-cyber-border bg-cyber-bg-soft/30">
+              <div className="flex items-center justify-between text-[11px] mb-1">
+                <span className="text-cyber-text-dim uppercase">{subscription.planId}</span>
+                <span className="text-cyber-text">
+                  {subscription.vmHoursRemaining.toFixed(1)}h left
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-cyber-border/60 overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${usageTone}`}
+                  style={{ width: `${usagePercent}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyber-text-dim hover:text-cyber-red hover:bg-cyber-red/10 transition-all duration-200"
