@@ -60,6 +60,31 @@ function parseSingleHeader(value: string | string[] | undefined): string | null 
   return value.trim() || null;
 }
 
+function isLocalFrontendDevRequest(
+  headers: Record<string, string | string[] | undefined>,
+  allowedOrigins: string[],
+): boolean {
+  const host = parseHost(parseSingleHeader(headers.host));
+  const origin = parseSingleHeader(headers.origin);
+  const hasForwardedHeaders = Boolean(
+    parseSingleHeader(headers["x-forwarded-for"]) ||
+      parseSingleHeader(headers["x-forwarded-host"]) ||
+      parseSingleHeader(headers["x-forwarded-proto"]),
+  );
+
+  if (!host || !origin) return false;
+
+  const isLocalHost =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "localhost:3001" ||
+    host === "127.0.0.1:3001";
+
+  if (!isLocalHost) return false;
+
+  return allowedOrigins.includes(origin) && !hasForwardedHeaders;
+}
+
 function getTrustedHosts(allowedOrigins: string[]): Set<string> {
   const hosts = new Set<string>();
 
@@ -131,6 +156,7 @@ async function bootstrap() {
   const allowedOrigins = getAllowedOrigins();
   const trustedHosts = getTrustedHosts(allowedOrigins);
   const edgeProxyToken = (process.env.EDGE_PROXY_TOKEN || "").trim();
+  const isProduction = (process.env.NODE_ENV || "development").toLowerCase() === "production";
 
   app.enableCors({
     origin: allowedOrigins,
@@ -140,6 +166,8 @@ async function bootstrap() {
   app.use((req: Request, res: Response, next: NextFunction) => {
     const forwardedProto = parseSingleHeader(req.headers["x-forwarded-proto"]);
     const edgeToken = parseSingleHeader(req.headers["x-edge-token"]);
+    const allowLocalDevBypass =
+      !isProduction && isLocalFrontendDevRequest(req.headers as Record<string, string | string[] | undefined>, allowedOrigins);
 
     // SECURITY: requests coming through the public edge must indicate HTTPS.
     if (forwardedProto && forwardedProto !== "https") {
@@ -151,7 +179,7 @@ async function bootstrap() {
     }
 
     // SECURITY: optional shared secret to reject direct gateway access bypassing edge.
-    if (edgeProxyToken) {
+    if (edgeProxyToken && !allowLocalDevBypass) {
       if (!edgeToken || edgeToken !== edgeProxyToken) {
         return res.status(403).json({
           statusCode: 403,
@@ -217,7 +245,14 @@ async function bootstrap() {
   ) {
     httpServer.on("upgrade", (req: any, socket: any, head: any) => {
       const edgeToken = parseSingleHeader(req.headers?.["x-edge-token"]);
-      if (edgeProxyToken && edgeToken !== edgeProxyToken) {
+      const allowLocalDevBypass =
+        !isProduction &&
+        isLocalFrontendDevRequest(
+          (req.headers || {}) as Record<string, string | string[] | undefined>,
+          allowedOrigins,
+        );
+
+      if (edgeProxyToken && !allowLocalDevBypass && edgeToken !== edgeProxyToken) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
