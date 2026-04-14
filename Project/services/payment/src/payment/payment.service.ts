@@ -47,12 +47,23 @@ export class PaymentService {
     const fromEnv = process.env.PUBLIC_APP_ORIGIN?.trim();
     if (fromEnv) return fromEnv;
 
-    const firstCors = (process.env.CORS_ORIGIN || "https://localhost")
+    const firstCors = (process.env.CORS_ORIGIN || "http://localhost:3000")
       .split(",")
       .map((v) => v.trim())
       .filter(Boolean)[0];
 
-    return firstCors || "https://localhost";
+    return firstCors || "http://localhost:3000";
+  }
+
+  private getUsdPerTndRate(): number {
+    const raw = (process.env.STRIPE_TND_TO_USD_RATE || "0.32").trim();
+    const rate = Number(raw);
+
+    if (!Number.isFinite(rate) || rate <= 0) {
+      throw new InternalServerErrorException("Invalid STRIPE_TND_TO_USD_RATE configuration");
+    }
+
+    return rate;
   }
 
   async createCheckoutSession(userId: string, planId: PlanId) {
@@ -66,6 +77,9 @@ export class PaymentService {
     }
 
     const origin = this.getPublicOrigin();
+    const usdPerTndRate = this.getUsdPerTndRate();
+    const usdAmount = Number((plan.amountDt * usdPerTndRate).toFixed(2));
+    const usdCents = Math.round(usdAmount * 100);
 
     const session = await this.stripe.checkout.sessions.create({
       mode: "payment",
@@ -74,11 +88,11 @@ export class PaymentService {
         {
           quantity: 1,
           price_data: {
-            currency: "tnd",
-            unit_amount: plan.amountMilli,
+            currency: "usd",
+            unit_amount: usdCents,
             product_data: {
               name: plan.name,
-              description: plan.description,
+              description: `${plan.description} · Displayed price: ${plan.amountDt} DT`,
             },
           },
         },
@@ -86,6 +100,9 @@ export class PaymentService {
       metadata: {
         userId,
         planId,
+        amountTnd: String(plan.amountDt),
+        usdPerTndRate: String(usdPerTndRate),
+        chargedUsd: String(usdAmount),
       },
       success_url: `${origin}/dashboard/billing?status=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/dashboard/billing?status=cancelled`,
@@ -97,7 +114,7 @@ export class PaymentService {
         amount: plan.amountDt,
         currency: "TND",
         status: "pending",
-        method: `stripe:${session.id}`,
+        method: `stripe:${session.id}:usd:${usdAmount.toFixed(2)}`,
       },
     });
 
@@ -106,6 +123,9 @@ export class PaymentService {
       sessionId: session.id,
       amountDt: plan.amountDt,
       currency: "TND",
+      chargedCurrency: "USD",
+      chargedAmount: usdAmount,
+      usdPerTndRate,
     };
   }
 
