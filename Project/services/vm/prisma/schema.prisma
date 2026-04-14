@@ -121,7 +121,7 @@ model Payment {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   amount    Float
-  currency  String   @default("DZD")
+  currency  String   @default("TND")
   status    String   @default("pending")
   method    String?
   createdAt DateTime @default(now())

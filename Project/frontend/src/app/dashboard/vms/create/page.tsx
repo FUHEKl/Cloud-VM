@@ -381,7 +381,7 @@ export default function CreateVmPage() {
                       <div className="mt-3 text-cyber-green font-semibold">
                         {plan.priceMonthly === 0
                           ? "Free"
-                          : `${plan.priceMonthly.toLocaleString()} DZD/mo`}
+                          : `${plan.priceMonthly.toLocaleString()} TND/mo`}
                       </div>
                     </button>
                   ))
