@@ -44,6 +44,17 @@ def _load_extra_ssh_keys() -> list[str]:
         return []
 
 
+def _inject_extra_ssh_keys_enabled() -> bool:
+    """
+    SECURITY: extra host-level SSH keys are disabled by default to preserve
+    per-user access isolation between VMs.
+
+    Set INJECT_EXTRA_SSH_KEYS=true to opt in explicitly.
+    """
+    raw = os.getenv("INJECT_EXTRA_SSH_KEYS", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _sanitize_ssh_public_keys(keys: list[str]) -> list[str]:
     """
     SECURITY: normalize/validate SSH keys before template injection.
@@ -145,11 +156,12 @@ class VMHandler:
 
             ssh_keys: list[str] = []
 
-            # Always inject the server-level key (from /root/.ssh/id_rsa.pub
-            # on the OpenNebula/Jetstream host, copied by setup-https.sh).
-            extra_keys = _load_extra_ssh_keys()
-            if extra_keys:
-                ssh_keys.extend(extra_keys)
+            # SECURITY: host-level keys are opt-in only. Enabling this makes
+            # every VM trust the same key, which weakens tenant isolation.
+            if _inject_extra_ssh_keys_enabled():
+                extra_keys = _load_extra_ssh_keys()
+                if extra_keys:
+                    ssh_keys.extend(extra_keys)
 
             db_ssh_key_count = 0
             if user_id:
