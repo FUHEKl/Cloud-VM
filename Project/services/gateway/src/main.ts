@@ -3,6 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { NextFunction, Request, Response, json, urlencoded } from "express";
 import helmet from "helmet";
+import Redis from "ioredis";
 import { AppModule } from "./app.module";
 import { terminalProxyInstance } from "./proxy/middlewares/terminal-proxy.middleware";
 import { vmEventsProxyInstance } from "./proxy/middlewares/vm-events-proxy.middleware";
@@ -58,6 +59,22 @@ function parseSingleHeader(value: string | string[] | undefined): string | null 
     return value[0]?.trim() || null;
   }
   return value.trim() || null;
+}
+
+function extractClientIpFromHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): string {
+  const forwardedFor = parseSingleHeader(headers["x-forwarded-for"]);
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0].trim().replace("::ffff:", "");
+  }
+
+  const realIp = parseSingleHeader(headers["x-real-ip"]);
+  if (realIp) {
+    return realIp.replace("::ffff:", "");
+  }
+
+  return "unknown";
 }
 
 function isLocalFrontendDevRequest(
@@ -157,6 +174,55 @@ async function bootstrap() {
   const trustedHosts = getTrustedHosts(allowedOrigins);
   const edgeProxyToken = (process.env.EDGE_PROXY_TOKEN || "").trim();
   const isProduction = (process.env.NODE_ENV || "development").toLowerCase() === "production";
+  const terminalWsRateLimit = Math.max(
+    1,
+    Number(process.env.TERMINAL_WS_RATE_LIMIT_PER_MINUTE || "30"),
+  );
+  const terminalWsRateWindowSeconds = Math.max(
+    1,
+    Number(process.env.TERMINAL_WS_RATE_LIMIT_WINDOW_SECONDS || "60"),
+  );
+  const wsRateLimitRedis = new Redis(
+    process.env.REDIS_URL ||
+      `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
+    {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+    },
+  );
+
+  const checkTerminalWsRateLimit = async (
+    headers: Record<string, string | string[] | undefined>,
+  ): Promise<{ allowed: boolean; retryAfterSeconds?: number; ip: string }> => {
+    const ip = extractClientIpFromHeaders(headers);
+    if (ip === "unknown") {
+      return { allowed: true, ip };
+    }
+
+    try {
+      if (wsRateLimitRedis.status !== "ready") {
+        await wsRateLimitRedis.connect();
+      }
+
+      const key = `security:gateway:ratelimit:ws-terminal:${ip}`;
+      const currentHits = await wsRateLimitRedis.incr(key);
+      if (currentHits === 1) {
+        await wsRateLimitRedis.expire(key, terminalWsRateWindowSeconds);
+      }
+
+      if (currentHits > terminalWsRateLimit) {
+        const ttl = Math.max(1, await wsRateLimitRedis.ttl(key));
+        return { allowed: false, retryAfterSeconds: ttl, ip };
+      }
+
+      return { allowed: true, ip };
+    } catch (error) {
+      console.warn(
+        `WS rate-limit Redis unavailable, allowing request (${(error as Error).message})`,
+      );
+      return { allowed: true, ip };
+    }
+  };
 
   app.enableCors({
     origin: allowedOrigins,
@@ -244,31 +310,56 @@ async function bootstrap() {
     typeof aiChatUpgrade === "function"
   ) {
     httpServer.on("upgrade", (req: any, socket: any, head: any) => {
-      const edgeToken = parseSingleHeader(req.headers?.["x-edge-token"]);
-      const allowLocalDevBypass =
-        !isProduction &&
-        isLocalFrontendDevRequest(
-          (req.headers || {}) as Record<string, string | string[] | undefined>,
-          allowedOrigins,
-        );
+      void (async () => {
+        const edgeToken = parseSingleHeader(req.headers?.["x-edge-token"]);
+        const allowLocalDevBypass =
+          !isProduction &&
+          isLocalFrontendDevRequest(
+            (req.headers || {}) as Record<string, string | string[] | undefined>,
+            allowedOrigins,
+          );
 
-      if (edgeProxyToken && !allowLocalDevBypass && edgeToken !== edgeProxyToken) {
-        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-        socket.destroy();
-        return;
-      }
+        if (edgeProxyToken && !allowLocalDevBypass && edgeToken !== edgeProxyToken) {
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
 
-      const url: string = req.url ?? "";
-      if (url.startsWith("/terminal/") && typeof terminalUpgrade === "function") {
-        terminalUpgrade(req, socket, head);
-      } else if (
-        url.startsWith("/vm-events/") &&
-        typeof vmEventsUpgrade === "function"
-      ) {
-        vmEventsUpgrade(req, socket, head);
-      } else if (url.startsWith("/ai-chat/") && typeof aiChatUpgrade === "function") {
-        aiChatUpgrade(req, socket, head);
-      }
+        const url: string = req.url ?? "";
+        if (url.startsWith("/terminal/") && typeof terminalUpgrade === "function") {
+          const rateDecision = await checkTerminalWsRateLimit(
+            (req.headers || {}) as Record<string, string | string[] | undefined>,
+          );
+          if (!rateDecision.allowed) {
+            console.warn(
+              JSON.stringify({
+                timestamp: new Date().toISOString(),
+                eventType: "rate_limit.hit",
+                ip: rateDecision.ip,
+                path: "/terminal/socket.io",
+                result: "blocked",
+                limit: terminalWsRateLimit,
+                windowSeconds: terminalWsRateWindowSeconds,
+                retryAfterSeconds: rateDecision.retryAfterSeconds,
+              }),
+            );
+            socket.write(
+              `HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${rateDecision.retryAfterSeconds || terminalWsRateWindowSeconds}\r\n\r\n`,
+            );
+            socket.destroy();
+            return;
+          }
+
+          terminalUpgrade(req, socket, head);
+        } else if (
+          url.startsWith("/vm-events/") &&
+          typeof vmEventsUpgrade === "function"
+        ) {
+          vmEventsUpgrade(req, socket, head);
+        } else if (url.startsWith("/ai-chat/") && typeof aiChatUpgrade === "function") {
+          aiChatUpgrade(req, socket, head);
+        }
+      })();
     });
 
     const registeredPaths: string[] = [];

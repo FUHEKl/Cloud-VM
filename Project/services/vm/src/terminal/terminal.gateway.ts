@@ -81,6 +81,12 @@ export class TerminalGateway implements OnGatewayDisconnect {
   private readonly maxInputBytesPerEvent = 4096;
   private readonly maxInputBytesPerSecond = 32768;
   private readonly maxInputEventsPerSecond = 100;
+  private readonly allowPasswordFallback = (() => {
+    const configured = (process.env.TERMINAL_ALLOW_PASSWORD_FALLBACK || "").trim().toLowerCase();
+    if (configured === "true") return true;
+    if (configured === "false") return false;
+    return (process.env.NODE_ENV || "development").toLowerCase() !== "production";
+  })();
   private readonly sshConnectTimeoutMs = Math.max(
     5000,
     Number(process.env.TERMINAL_SSH_CONNECT_TIMEOUT_MS ?? 20000),
@@ -392,7 +398,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
               if (payload.privateKey && payload.privateKey.trim().length > 0) {
                 tunneledConnectOptions.privateKey = payload.privateKey;
-                if (username === "cloudvm" && defaultVmPassword) {
+                if (this.allowPasswordFallback && username === "cloudvm" && defaultVmPassword) {
                   // Reliability fallback: when key auth fails due delayed/partial key setup,
                   // also allow password auth on the same attempt for the default cloudvm user.
                   tunneledConnectOptions.password = payload.password || defaultVmPassword;
@@ -454,6 +460,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
         const candidatePassword = payload.password || defaultVmPassword;
         if (
           hasAttemptedPasswordRetry ||
+          !this.allowPasswordFallback ||
           !payload.privateKey ||
           !candidatePassword ||
           username !== "cloudvm"
@@ -697,7 +704,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       if (payload.privateKey && payload.privateKey.trim().length > 0) {
         connectOptions.privateKey = payload.privateKey;
-        if (username === "cloudvm" && defaultVmPassword) {
+        if (this.allowPasswordFallback && username === "cloudvm" && defaultVmPassword) {
           // Reliability fallback for dev/lab templates that may race key injection.
           connectOptions.password = payload.password || defaultVmPassword;
         }
