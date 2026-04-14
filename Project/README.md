@@ -135,8 +135,14 @@ The important variables are:
 - auth: `JWT_SECRET`, `JWT_REFRESH_SECRET`, `JWT_EXPIRES_IN`, `JWT_REFRESH_EXPIRES_IN`
 - messaging: `REDIS_HOST`, `REDIS_PORT`, `NATS_URL`
 - OpenNebula: `ONE_XMLRPC`, `ONE_USERNAME`, `ONE_PASSWORD`, `ONE_IP_OFFSET`
+- worker SSH policy: `INJECT_EXTRA_SSH_KEYS`, `EXTRA_SSH_KEYS_FILE`
 - frontend/gateway URLs: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_VM_WS_URL`, `CORS_ORIGIN`
 - AI provider config: `AI_PROVIDER`, `AI_FALLBACK_ENABLED`, `AI_RATE_LIMIT_PER_MIN`, `AI_ACTION_CONFIRM_SECRET`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`
+
+Security note:
+
+- keep `INJECT_EXTRA_SSH_KEYS=false` in multi-tenant environments.
+- enabling it injects the same host-level SSH key into every VM and weakens per-user access isolation.
 
 ## 7) Rebuild the project from zero
 
@@ -354,6 +360,11 @@ The worker is the bridge between the application and OpenNebula.
    - the host-level injected key file
    - the user’s saved SSH keys
    - the request payload SSH key
+
+Important isolation warning:
+
+- host-level key injection must remain disabled by default (`INJECT_EXTRA_SSH_KEYS=false`).
+- only enable it intentionally for trusted single-tenant/lab setups where shared host access is acceptable.
 3. deduplicate the keys
 4. instantiate the VM with CPU, RAM, and disk settings
 5. persist `PENDING` state and the OpenNebula VM ID
