@@ -544,6 +544,29 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
+    const freePlan = await this.prisma.plan.findFirst({
+      where: {
+        isActive: true,
+        name: {
+          equals: "free",
+          mode: "insensitive",
+        },
+      },
+      select: {
+        maxVms: true,
+        cpu: true,
+        ramMb: true,
+        diskGb: true,
+      },
+    });
+
+    if (!freePlan) {
+      throw new HttpException(
+        "Registration unavailable: active 'free' plan is not configured",
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -552,10 +575,10 @@ export class AuthService {
         lastName: dto.lastName,
         quota: {
           create: {
-            maxVms: 3,
-            maxCpu: 4,
-            maxRamMb: 4096,
-            maxDiskGb: 50,
+            maxVms: freePlan.maxVms,
+            maxCpu: freePlan.cpu,
+            maxRamMb: freePlan.ramMb,
+            maxDiskGb: freePlan.diskGb,
           },
         },
       },

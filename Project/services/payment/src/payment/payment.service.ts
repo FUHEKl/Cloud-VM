@@ -129,9 +129,6 @@ export class PaymentService {
       return planMatch[1] as AnyPlanId;
     }
 
-    if (payment.amount >= 199) return "enterprise";
-    if (payment.amount >= 79) return "pro";
-    if (payment.amount >= 29) return "student";
     return null;
   }
 
@@ -316,43 +313,6 @@ export class PaymentService {
   }
 
   async listPayments(userId: string) {
-    if (this.stripe) {
-      const pending = await this.prisma.payment.findMany({
-        where: {
-          userId,
-          status: "pending",
-          method: { startsWith: "stripe:" },
-        },
-        take: 20,
-        orderBy: { createdAt: "desc" },
-      });
-
-      for (const payment of pending) {
-        const method = payment.method || "";
-        const sessionId = method.split(":")[1];
-        if (!sessionId) continue;
-
-        try {
-          const session = await this.stripe.checkout.sessions.retrieve(sessionId);
-          if (session.payment_status === "paid") {
-            const planId = this.extractPlanFromPayment(payment);
-            await this.prisma.payment.update({
-              where: { id: payment.id },
-              data: { status: "paid" },
-            });
-            await this.syncQuotaForPlan(userId, planId);
-          } else if (session.status === "expired") {
-            await this.prisma.payment.update({
-              where: { id: payment.id },
-              data: { status: "expired" },
-            });
-          }
-        } catch {
-          // Keep record as pending if Stripe session lookup fails.
-        }
-      }
-    }
-
     return this.prisma.payment.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -381,16 +341,42 @@ export class PaymentService {
       throw new BadRequestException("Invalid Stripe webhook signature");
     }
 
+    try {
+      await this.prisma.stripeWebhookEvent.create({
+        data: {
+          eventId: event.id,
+          eventType: event.type,
+        },
+      });
+    } catch (error) {
+      const prismaCode = (error as { code?: string })?.code;
+      if (prismaCode === "P2002") {
+        // Stripe retries can deliver the same event multiple times.
+        return;
+      }
+      throw error;
+    }
+
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
 
       const matched = await this.prisma.payment.findMany({
-        where: { method: { startsWith: `stripe:${session.id}` } },
+        where: {
+          method: { startsWith: `stripe:${session.id}` },
+          status: { notIn: ["paid", "admin_granted"] },
+        },
         select: { id: true, userId: true, method: true, amount: true },
       });
 
+      if (matched.length === 0) {
+        return;
+      }
+
       await this.prisma.payment.updateMany({
-        where: { method: { startsWith: `stripe:${session.id}` } },
+        where: {
+          id: { in: matched.map((payment) => payment.id) },
+          status: { notIn: ["paid", "admin_granted"] },
+        },
         data: { status: "paid" },
       });
 
@@ -403,7 +389,10 @@ export class PaymentService {
     if (event.type === "checkout.session.expired") {
       const session = event.data.object as Stripe.Checkout.Session;
       await this.prisma.payment.updateMany({
-        where: { method: { startsWith: `stripe:${session.id}` } },
+        where: {
+          method: { startsWith: `stripe:${session.id}` },
+          status: "pending",
+        },
         data: { status: "expired" },
       });
     }

@@ -51,3 +51,12 @@ model Payment {
 
   @@map("payments")
 }
+
+model StripeWebhookEvent {
+  id        String   @id @default(uuid())
+  eventId   String   @unique
+  eventType String
+  createdAt DateTime @default(now())
+
+  @@map("stripe_webhook_events")
+}

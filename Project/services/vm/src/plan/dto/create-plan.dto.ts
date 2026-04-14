@@ -17,6 +17,10 @@ export class CreatePlanDto {
 
   @IsInt()
   @Min(1)
+  maxVms!: number;
+
+  @IsInt()
+  @Min(1)
   cpu!: number;
 
   @IsInt()

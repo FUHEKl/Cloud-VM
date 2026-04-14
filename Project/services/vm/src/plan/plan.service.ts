@@ -25,6 +25,7 @@ export class PlanService {
     return this.prisma.plan.create({
       data: {
         name: dto.name,
+        maxVms: dto.maxVms,
         cpu: dto.cpu,
         ramMb: dto.ramMb,
         diskGb: dto.diskGb,

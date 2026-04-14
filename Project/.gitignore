@@ -8,3 +8,18 @@ __pycache__/
 .venv/
 coverage/
 .turbo/
+
+# Public-repo hygiene
+rapport/
+COPILOT_HANDOFF*.md
+derived_public_key.txt
+
+# Never commit TLS private/public cert material
+nginx/ssl/*.key
+nginx/ssl/*.crt
+!nginx/ssl/.gitkeep
+
+# Keep only OpenNebula scripts in public repo
+scripts/*
+!scripts/opennebula/
+!scripts/opennebula/**

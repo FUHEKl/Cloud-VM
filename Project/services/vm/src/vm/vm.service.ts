@@ -9,7 +9,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { NatsService } from "../nats/nats.service";
 import { CreateVmDto } from "./dto/create-vm.dto";
-import { VmStatus } from "@prisma/client";
+import { Prisma, VmStatus } from "@prisma/client";
 import { generateKeyPairSync } from "crypto";
 import sshpk from "sshpk";
 
@@ -91,72 +91,78 @@ export class VmService {
       `Generated VM SSH key pair (public prefix=${vmKeyPair.publicKeySsh.split(" ")[0]}, length=${vmKeyPair.publicKeySsh.length})`,
     );
 
-    // Check user quota
-    const quota = await this.prisma.userQuota.findUnique({
-      where: { userId },
-    });
+    const vm = await this.prisma.$transaction(
+      async (tx) => {
+        // SECURITY: per-user transaction lock prevents TOCTOU quota bypass
+        // when concurrent create requests hit at the same time.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
 
-    const activeVms = await this.prisma.virtualMachine.count({
-      where: {
-        userId,
-        status: { notIn: [VmStatus.DELETED] },
+        const quota = await tx.userQuota.findUnique({
+          where: { userId },
+        });
+
+        const activeVms = await tx.virtualMachine.count({
+          where: {
+            userId,
+            status: { notIn: [VmStatus.DELETED] },
+          },
+        });
+
+        const maxVms = quota?.maxVms ?? 3;
+        const maxCpu = quota?.maxCpu ?? 4;
+        const maxRamMb = quota?.maxRamMb ?? 4096;
+        const maxDiskGb = quota?.maxDiskGb ?? 50;
+
+        if (activeVms >= maxVms) {
+          throw new ForbiddenException(
+            `VM quota exceeded. Maximum ${maxVms} VMs allowed.`,
+          );
+        }
+
+        const currentUsage = await tx.virtualMachine.aggregate({
+          where: {
+            userId,
+            status: { notIn: [VmStatus.DELETED] },
+          },
+          _sum: { cpu: true, ramMb: true, diskGb: true },
+        });
+
+        const usedCpu = currentUsage._sum.cpu ?? 0;
+        const usedRam = currentUsage._sum.ramMb ?? 0;
+        const usedDisk = currentUsage._sum.diskGb ?? 0;
+
+        if (usedCpu + dto.cpu > maxCpu) {
+          throw new ForbiddenException(
+            `CPU quota exceeded. Used: ${usedCpu}, Requested: ${dto.cpu}, Max: ${maxCpu}`,
+          );
+        }
+        if (usedRam + dto.ramMb > maxRamMb) {
+          throw new ForbiddenException(
+            `RAM quota exceeded. Used: ${usedRam}MB, Requested: ${dto.ramMb}MB, Max: ${maxRamMb}MB`,
+          );
+        }
+        if (usedDisk + dto.diskGb > maxDiskGb) {
+          throw new ForbiddenException(
+            `Disk quota exceeded. Used: ${usedDisk}GB, Requested: ${dto.diskGb}GB, Max: ${maxDiskGb}GB`,
+          );
+        }
+
+        return tx.virtualMachine.create({
+          data: {
+            name: dto.name,
+            cpu: dto.cpu,
+            ramMb: dto.ramMb,
+            diskGb: dto.diskGb,
+            osTemplate: dto.osTemplate,
+            userId,
+            planId: dto.planId || null,
+            status: VmStatus.PENDING,
+            sshUsername: "cloudvm",
+          },
+        });
       },
-    });
-
-    const maxVms = quota?.maxVms ?? 3;
-    const maxCpu = quota?.maxCpu ?? 4;
-    const maxRamMb = quota?.maxRamMb ?? 4096;
-    const maxDiskGb = quota?.maxDiskGb ?? 50;
-
-    if (activeVms >= maxVms) {
-      throw new ForbiddenException(
-        `VM quota exceeded. Maximum ${maxVms} VMs allowed.`,
-      );
-    }
-
-    // Sum current resource usage
-    const currentUsage = await this.prisma.virtualMachine.aggregate({
-      where: {
-        userId,
-        status: { notIn: [VmStatus.DELETED] },
-      },
-      _sum: { cpu: true, ramMb: true, diskGb: true },
-    });
-
-    const usedCpu = currentUsage._sum.cpu ?? 0;
-    const usedRam = currentUsage._sum.ramMb ?? 0;
-    const usedDisk = currentUsage._sum.diskGb ?? 0;
-
-    if (usedCpu + dto.cpu > maxCpu) {
-      throw new ForbiddenException(
-        `CPU quota exceeded. Used: ${usedCpu}, Requested: ${dto.cpu}, Max: ${maxCpu}`,
-      );
-    }
-    if (usedRam + dto.ramMb > maxRamMb) {
-      throw new ForbiddenException(
-        `RAM quota exceeded. Used: ${usedRam}MB, Requested: ${dto.ramMb}MB, Max: ${maxRamMb}MB`,
-      );
-    }
-    if (usedDisk + dto.diskGb > maxDiskGb) {
-      throw new ForbiddenException(
-        `Disk quota exceeded. Used: ${usedDisk}GB, Requested: ${dto.diskGb}GB, Max: ${maxDiskGb}GB`,
-      );
-    }
-
-    // Create VM record
-    const vm = await this.prisma.virtualMachine.create({
-      data: {
-        name: dto.name,
-        cpu: dto.cpu,
-        ramMb: dto.ramMb,
-        diskGb: dto.diskGb,
-        osTemplate: dto.osTemplate,
-        userId,
-        planId: dto.planId || null,
-        status: VmStatus.PENDING,
-        sshUsername: "cloudvm",
-      },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
 
     // Publish to NATS for the worker to create the VM
     this.logger.log(
