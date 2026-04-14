@@ -233,7 +233,7 @@ export default function DashboardLayout({
       {/* Sidebar */}
       <aside
         className={clsx(
-          "fixed lg:static inset-y-0 left-0 z-50 w-64 bg-cyber-card border-r border-cyber-border flex flex-col transition-transform duration-300",
+          "fixed lg:sticky lg:top-0 lg:h-screen lg:self-start inset-y-0 left-0 z-50 w-64 bg-cyber-card border-r border-cyber-border flex flex-col transition-transform duration-300",
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         )}
       >

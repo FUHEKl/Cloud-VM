@@ -153,6 +153,58 @@ export default function DashboardPage() {
     },
   ];
 
+  const subscription = profileDetails?.subscription;
+  const usage = profileDetails?.usage;
+  const quota = profileDetails?.quota;
+
+  const toPercent = (used: number, max: number) => {
+    if (!Number.isFinite(max) || max <= 0) return 0;
+    return Math.min(100, Math.max(0, (used / max) * 100));
+  };
+
+  const cpuPct = usage && quota ? toPercent(usage.cpuUsed, quota.maxCpu) : 0;
+  const ramPct = usage && quota ? toPercent(usage.ramMbUsed, quota.maxRamMb) : 0;
+  const diskPct = usage && quota ? toPercent(usage.diskGbUsed, quota.maxDiskGb) : 0;
+  const vmHoursPct = subscription
+    ? toPercent(subscription.vmHoursUsed, subscription.vmHoursIncluded)
+    : 0;
+
+  const showUpgradeHint =
+    !!subscription &&
+    subscription.planId !== "unlimited" &&
+    (vmHoursPct >= 80 || cpuPct >= 80 || ramPct >= 80 || diskPct >= 80);
+
+  const progressTone = (pct: number) => {
+    if (pct >= 90) return "bg-cyber-red";
+    if (pct >= 75) return "bg-cyber-orange";
+    return "bg-cyber-green";
+  };
+
+  const ProgressRow = ({
+    label,
+    used,
+    max,
+    pct,
+  }: {
+    label: string;
+    used: string;
+    max: string;
+    pct: number;
+  }) => (
+    <div>
+      <div className="flex items-center justify-between text-xs mb-1">
+        <span className="text-cyber-text-dim">{label}</span>
+        <span className="text-cyber-text">{used} / {max}</span>
+      </div>
+      <div className="h-2 rounded-full bg-cyber-border/60 overflow-hidden">
+        <div
+          className={`h-full rounded-full ${progressTone(pct)}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+
   return (
     <div>
       {/* Welcome */}
@@ -219,6 +271,29 @@ export default function DashboardPage() {
                 <p className="text-cyber-text font-semibold">{profileDetails.usage.vmCount}</p>
               </div>
             </div>
+
+            {quota && (
+              <div className="mt-4 space-y-3">
+                <ProgressRow
+                  label="CPU"
+                  used={`${usage?.cpuUsed ?? 0} vCPU`}
+                  max={`${quota.maxCpu} vCPU`}
+                  pct={cpuPct}
+                />
+                <ProgressRow
+                  label="RAM"
+                  used={`${((usage?.ramMbUsed ?? 0) / 1024).toFixed(2)} GB`}
+                  max={`${(quota.maxRamMb / 1024).toFixed(2)} GB`}
+                  pct={ramPct}
+                />
+                <ProgressRow
+                  label="Disk"
+                  used={`${usage?.diskGbUsed ?? 0} GB`}
+                  max={`${quota.maxDiskGb} GB`}
+                  pct={diskPct}
+                />
+              </div>
+            )}
           </div>
 
           <div className="cyber-card">
@@ -236,6 +311,22 @@ export default function DashboardPage() {
               <p>
                 Cycle ends: <span className="text-cyber-text">{new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}</span>
               </p>
+              <ProgressRow
+                label="VM Hours"
+                used={`${subscription?.vmHoursUsed.toFixed(2) ?? "0.00"} h`}
+                max={`${subscription?.vmHoursIncluded ?? 0} h`}
+                pct={vmHoursPct}
+              />
+              {showUpgradeHint && (
+                <div className="mt-2 px-3 py-2 rounded-lg border border-cyber-orange/30 bg-cyber-orange/10 text-cyber-orange text-xs">
+                  You are close to plan limits. Consider upgrading to avoid interruptions.
+                  <div className="mt-1">
+                    <Link href="/dashboard/billing" className="underline hover:no-underline">
+                      Open billing plans
+                    </Link>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
