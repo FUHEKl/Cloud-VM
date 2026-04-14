@@ -128,6 +128,24 @@ const adminItems = [
       </svg>
     ),
   },
+  {
+    label: "Admin Billing",
+    href: "/dashboard/admin/billing",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      >
+        <rect x="2" y="5" width="20" height="14" rx="2" />
+        <path d="M2 10h20" />
+        <path d="M7 15h3" />
+        <path d="M16 14v4M14 16h4" />
+      </svg>
+    ),
+  },
 ];
 
 export default function DashboardLayout({
@@ -189,8 +207,13 @@ export default function DashboardLayout({
 
   if (!isAuthenticated) return null;
 
+  const baseNavItems =
+    user?.role === "ADMIN"
+      ? navItems.filter((item) => item.href !== "/dashboard/billing")
+      : navItems;
+
   const allNavItems =
-    user?.role === "ADMIN" ? [...navItems, ...adminItems] : navItems;
+    user?.role === "ADMIN" ? [...baseNavItems, ...adminItems] : baseNavItems;
 
   const handleLogout = async () => {
     await logout();

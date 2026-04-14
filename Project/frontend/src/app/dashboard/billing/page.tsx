@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
+import { useAuth } from "@/lib/auth";
 
 type PlanId = "student" | "pro" | "enterprise";
 
@@ -43,8 +44,11 @@ interface PaymentRecord {
 }
 
 export default function BillingPage() {
+  const { user } = useAuth();
   const params = useSearchParams();
   const preferredPlan = params.get("plan") as PlanId | null;
+  const status = params.get("status");
+  const isAdmin = user?.role === "ADMIN";
 
   const [loadingPlan, setLoadingPlan] = useState<PlanId | null>(null);
   const [error, setError] = useState("");
@@ -58,7 +62,7 @@ export default function BillingPage() {
     return [preferred, ...plans.filter((p) => p.id !== preferred.id)];
   }, [preferredPlan]);
 
-  const loadPayments = async () => {
+  const loadPayments = useCallback(async () => {
     setLoadingPayments(true);
     try {
       const { data } = await api.get<PaymentRecord[]>("/payments/me");
@@ -68,10 +72,32 @@ export default function BillingPage() {
     } finally {
       setLoadingPayments(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadPayments();
+  }, [loadPayments, status]);
+
+  useEffect(() => {
+    if (status !== "success") return;
+
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      void loadPayments();
+      if (Date.now() - startedAt > 20_000) {
+        clearInterval(interval);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [status, loadPayments]);
 
   const startCheckout = async (planId: PlanId) => {
     setError("");
+    if (isAdmin) {
+      setError("Admin accounts are unlimited and cannot create Stripe checkout sessions.");
+      return;
+    }
     setLoadingPlan(planId);
     try {
       const { data } = await api.post<{ checkoutUrl?: string }>(
@@ -97,15 +123,23 @@ export default function BillingPage() {
         <p className="text-cyber-text-dim">
           Plans are billed in Tunisian dinar (DT). Card payment is processed securely with Stripe.
         </p>
+        <p className="text-cyber-text-dim text-sm mt-1">
+          Note: Stripe charges your card in USD using the current configured conversion rate.
+        </p>
+        {isAdmin && (
+          <p className="text-cyber-cyan text-sm mt-1">
+            Admin account detected: unlimited access is active, billing checkout is disabled.
+          </p>
+        )}
       </div>
 
-      {params.get("status") === "success" && (
+      {status === "success" && (
         <div className="px-4 py-3 rounded-lg bg-cyber-green/10 border border-cyber-green/30 text-cyber-green text-sm">
           Payment completed. Your transaction is being recorded.
         </div>
       )}
 
-      {params.get("status") === "cancelled" && (
+      {status === "cancelled" && (
         <div className="px-4 py-3 rounded-lg bg-cyber-orange/10 border border-cyber-orange/30 text-cyber-orange text-sm">
           Checkout cancelled. No charge was made.
         </div>
@@ -117,26 +151,28 @@ export default function BillingPage() {
         </div>
       )}
 
-      <div className="grid md:grid-cols-3 gap-4">
-        {orderedPlans.map((plan) => (
-          <div key={plan.id} className="cyber-card">
-            <h3 className="text-lg font-semibold text-cyber-text mb-1">{plan.name}</h3>
-            <p className="text-3xl font-bold text-cyber-green mb-4">{plan.dt} DT<span className="text-sm text-cyber-text-dim"> / month</span></p>
-            <ul className="space-y-2 mb-5 text-sm text-cyber-text-dim">
-              {plan.features.map((f) => (
-                <li key={f}>• {f}</li>
-              ))}
-            </ul>
-            <button
-              onClick={() => startCheckout(plan.id)}
-              disabled={loadingPlan !== null}
-              className="cyber-btn-primary w-full disabled:opacity-50"
-            >
-              {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.dt} DT`}
-            </button>
-          </div>
-        ))}
-      </div>
+      {!isAdmin && (
+        <div className="grid md:grid-cols-3 gap-4">
+          {orderedPlans.map((plan) => (
+            <div key={plan.id} className="cyber-card">
+              <h3 className="text-lg font-semibold text-cyber-text mb-1">{plan.name}</h3>
+              <p className="text-3xl font-bold text-cyber-green mb-4">{plan.dt} DT<span className="text-sm text-cyber-text-dim"> / month</span></p>
+              <ul className="space-y-2 mb-5 text-sm text-cyber-text-dim">
+                {plan.features.map((f) => (
+                  <li key={f}>• {f}</li>
+                ))}
+              </ul>
+              <button
+                onClick={() => startCheckout(plan.id)}
+                disabled={loadingPlan !== null}
+                className="cyber-btn-primary w-full disabled:opacity-50"
+              >
+                {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.dt} DT`}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="cyber-card">
         <div className="flex items-center justify-between mb-4">

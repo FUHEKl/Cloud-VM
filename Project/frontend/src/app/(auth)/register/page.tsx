@@ -142,12 +142,17 @@ export default function RegisterPage() {
               <input
                 type="password"
                 className="cyber-input"
-                placeholder="Min. 6 characters"
+                placeholder="Min. 8 chars (Aa1!)"
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                 required
-                minLength={6}
+                minLength={8}
+                pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).+$"
+                title="At least 8 characters, with uppercase, lowercase, number, and special character"
               />
+              <p className="text-xs text-cyber-text-dim mt-1">
+                Must contain uppercase, lowercase, number, and special character.
+              </p>
             </div>
 
             <div>

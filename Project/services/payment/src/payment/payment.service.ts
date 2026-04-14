@@ -130,6 +130,41 @@ export class PaymentService {
   }
 
   async listPayments(userId: string) {
+    if (this.stripe) {
+      const pending = await this.prisma.payment.findMany({
+        where: {
+          userId,
+          status: "pending",
+          method: { startsWith: "stripe:" },
+        },
+        take: 20,
+        orderBy: { createdAt: "desc" },
+      });
+
+      for (const payment of pending) {
+        const method = payment.method || "";
+        const sessionId = method.split(":")[1];
+        if (!sessionId) continue;
+
+        try {
+          const session = await this.stripe.checkout.sessions.retrieve(sessionId);
+          if (session.payment_status === "paid") {
+            await this.prisma.payment.update({
+              where: { id: payment.id },
+              data: { status: "paid" },
+            });
+          } else if (session.status === "expired") {
+            await this.prisma.payment.update({
+              where: { id: payment.id },
+              data: { status: "expired" },
+            });
+          }
+        } catch {
+          // Keep record as pending if Stripe session lookup fails.
+        }
+      }
+    }
+
     return this.prisma.payment.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -161,7 +196,7 @@ export class PaymentService {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       await this.prisma.payment.updateMany({
-        where: { method: `stripe:${session.id}` },
+        where: { method: { startsWith: `stripe:${session.id}` } },
         data: { status: "paid" },
       });
     }
@@ -169,7 +204,7 @@ export class PaymentService {
     if (event.type === "checkout.session.expired") {
       const session = event.data.object as Stripe.Checkout.Session;
       await this.prisma.payment.updateMany({
-        where: { method: `stripe:${session.id}` },
+        where: { method: { startsWith: `stripe:${session.id}` } },
         data: { status: "expired" },
       });
     }

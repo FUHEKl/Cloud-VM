@@ -217,8 +217,13 @@ export default function ProfilePage() {
                 setPasswords({ ...passwords, newPassword: e.target.value })
               }
               required
-              minLength={6}
+              minLength={8}
+              pattern="^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).+$"
+              title="At least 8 characters, with uppercase, lowercase, number, and special character"
             />
+            <p className="text-xs text-cyber-text-dim mt-1">
+              Use at least 8 chars with uppercase, lowercase, number, and special character.
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">

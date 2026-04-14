@@ -9,7 +9,48 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 import { AdminUpdateUserDto } from "./dto/admin-update-user.dto";
+import {
+  AdminSetSubscriptionDto,
+  SubscriptionPlanId,
+} from "./dto/admin-set-subscription.dto";
 import * as bcrypt from "bcrypt";
+
+const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
+  maxVms: number;
+  maxCpu: number;
+  maxRamMb: number;
+  maxDiskGb: number;
+  monthlyPriceDt: number;
+}> = {
+  [SubscriptionPlanId.STUDENT]: {
+    maxVms: 2,
+    maxCpu: 2,
+    maxRamMb: 4096,
+    maxDiskGb: 40,
+    monthlyPriceDt: 29,
+  },
+  [SubscriptionPlanId.PRO]: {
+    maxVms: 6,
+    maxCpu: 8,
+    maxRamMb: 16384,
+    maxDiskGb: 120,
+    monthlyPriceDt: 79,
+  },
+  [SubscriptionPlanId.ENTERPRISE]: {
+    maxVms: 20,
+    maxCpu: 32,
+    maxRamMb: 65536,
+    maxDiskGb: 400,
+    monthlyPriceDt: 199,
+  },
+  [SubscriptionPlanId.UNLIMITED]: {
+    maxVms: 9999,
+    maxCpu: 9999,
+    maxRamMb: 999999,
+    maxDiskGb: 99999,
+    monthlyPriceDt: 0,
+  },
+};
 
 @Injectable()
 export class UserService {
@@ -25,6 +66,58 @@ export class UserService {
   private excludePassword(user: any) {
     const { password, ...userWithoutPassword } = user;
     return userWithoutPassword;
+  }
+
+  private resolvePlanFromQuota(quota?: {
+    maxVms: number;
+    maxCpu: number;
+    maxRamMb: number;
+    maxDiskGb: number;
+  } | null): SubscriptionPlanId {
+    if (!quota) return SubscriptionPlanId.STUDENT;
+
+    if (
+      quota.maxVms >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxVms ||
+      quota.maxCpu >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxCpu
+    ) {
+      return SubscriptionPlanId.UNLIMITED;
+    }
+
+    if (
+      quota.maxVms >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.ENTERPRISE].maxVms &&
+      quota.maxCpu >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.ENTERPRISE].maxCpu
+    ) {
+      return SubscriptionPlanId.ENTERPRISE;
+    }
+
+    if (
+      quota.maxVms >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.PRO].maxVms &&
+      quota.maxCpu >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.PRO].maxCpu
+    ) {
+      return SubscriptionPlanId.PRO;
+    }
+
+    return SubscriptionPlanId.STUDENT;
+  }
+
+  private async upsertQuota(userId: string, planId: SubscriptionPlanId) {
+    const quota = SUBSCRIPTION_QUOTAS[planId];
+    return this.prisma.userQuota.upsert({
+      where: { userId },
+      update: {
+        maxVms: quota.maxVms,
+        maxCpu: quota.maxCpu,
+        maxRamMb: quota.maxRamMb,
+        maxDiskGb: quota.maxDiskGb,
+      },
+      create: {
+        userId,
+        maxVms: quota.maxVms,
+        maxCpu: quota.maxCpu,
+        maxRamMb: quota.maxRamMb,
+        maxDiskGb: quota.maxDiskGb,
+      },
+    });
   }
 
   async getProfile(userId: string) {
@@ -141,7 +234,12 @@ export class UserService {
     return this.excludePassword(user);
   }
 
-  async adminUpdateUser(id: string, dto: AdminUpdateUserDto, actorRole?: string) {
+  async adminUpdateUser(
+    id: string,
+    dto: AdminUpdateUserDto,
+    actorRole?: string,
+    actorUserId?: string,
+  ) {
     this.assertAdminRole(actorRole);
     const user = await this.prisma.user.findUnique({
       where: { id },
@@ -151,12 +249,181 @@ export class UserService {
       throw new NotFoundException("User not found");
     }
 
+    if (id === actorUserId && dto.role && dto.role !== "ADMIN") {
+      throw new ForbiddenException("You cannot remove your own admin role");
+    }
+
+    if (id === actorUserId && dto.isActive === false) {
+      throw new ForbiddenException("You cannot deactivate your own account");
+    }
+
     const updated = await this.prisma.user.update({
       where: { id },
       data: dto,
     });
 
+    if (dto.role === "ADMIN") {
+      await this.upsertQuota(id, SubscriptionPlanId.UNLIMITED);
+    }
+
+    if (user.role === "ADMIN" && dto.role === "USER") {
+      await this.upsertQuota(id, SubscriptionPlanId.STUDENT);
+    }
+
     return this.excludePassword(updated);
+  }
+
+  async setUserSubscription(
+    id: string,
+    dto: AdminSetSubscriptionDto,
+    actorRole?: string,
+    actorUserId?: string,
+  ) {
+    this.assertAdminRole(actorRole);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { quota: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    if (id === actorUserId && user.role === "ADMIN" && dto.planId !== SubscriptionPlanId.UNLIMITED) {
+      throw new ForbiddenException("Admin accounts must remain on unlimited subscription");
+    }
+
+    const finalPlan = user.role === "ADMIN" ? SubscriptionPlanId.UNLIMITED : dto.planId;
+    const quota = await this.upsertQuota(id, finalPlan);
+
+    if (finalPlan !== SubscriptionPlanId.UNLIMITED) {
+      const plan = SUBSCRIPTION_QUOTAS[finalPlan];
+      await this.prisma.payment.create({
+        data: {
+          userId: id,
+          amount: plan.monthlyPriceDt,
+          currency: "TND",
+          status: "admin_granted",
+          method: `admin:grant:${finalPlan}`,
+        },
+      });
+    }
+
+    return {
+      message: "Subscription updated successfully",
+      subscription: finalPlan,
+      quota,
+      userId: id,
+    };
+  }
+
+  async getUserBillingSummary(id: string, actorRole?: string) {
+    this.assertAdminRole(actorRole);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        quota: true,
+        payments: {
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    const paidPayments = user.payments.filter((p) => p.status === "paid");
+    const totalSpent = paidPayments.reduce((acc, p) => acc + p.amount, 0);
+    const lastPaid = paidPayments[0] ?? null;
+
+    return {
+      user: this.excludePassword(user),
+      subscription:
+        user.role === "ADMIN"
+          ? SubscriptionPlanId.UNLIMITED
+          : this.resolvePlanFromQuota(user.quota),
+      totalSpent,
+      paidPaymentsCount: paidPayments.length,
+      pendingPaymentsCount: user.payments.filter((p) => p.status === "pending").length,
+      lastPaid,
+      recentPayments: user.payments,
+    };
+  }
+
+  async getAdminBillingOverview(
+    actorRole?: string,
+    page = 1,
+    limit = 20,
+    search?: string,
+  ) {
+    this.assertAdminRole(actorRole);
+
+    const skip = (page - 1) * limit;
+
+    const userWhere = search
+      ? {
+          OR: [
+            { email: { contains: search, mode: "insensitive" as const } },
+            { firstName: { contains: search, mode: "insensitive" as const } },
+            { lastName: { contains: search, mode: "insensitive" as const } },
+          ],
+        }
+      : {};
+
+    const [
+      recentPayments,
+      users,
+      totalUsers,
+      paidPayments,
+      pendingPayments,
+      totalRevenue,
+    ] = await Promise.all([
+      this.prisma.payment.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          user: {
+            select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true },
+          },
+        },
+      }),
+      this.prisma.user.findMany({
+        where: userWhere,
+        include: { quota: true },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.user.count(),
+      this.prisma.payment.count({ where: { status: "paid" } }),
+      this.prisma.payment.count({ where: { status: "pending" } }),
+      this.prisma.payment.aggregate({ where: { status: "paid" }, _sum: { amount: true } }),
+    ]);
+
+    const usersWithSubscription = users.map((user) => ({
+      ...this.excludePassword(user),
+      subscription:
+        user.role === "ADMIN"
+          ? SubscriptionPlanId.UNLIMITED
+          : this.resolvePlanFromQuota(user.quota),
+    }));
+
+    return {
+      overview: {
+        totalUsers,
+        paidPayments,
+        pendingPayments,
+        totalRevenueTnd: totalRevenue._sum.amount ?? 0,
+      },
+      users: usersWithSubscription,
+      recentPayments,
+      page,
+      limit,
+    };
   }
 
   async deleteUser(id: string, actorRole?: string) {
