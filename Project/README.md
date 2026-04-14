@@ -61,6 +61,21 @@ Use Docker Compose from the project root.
 - Frontend: `http://localhost:3000`
 - Gateway API: `http://localhost:3001`
 
+### 5) HTTPS for Web Terminal (Required)
+
+The browser terminal uses secure WebSocket when the app runs over HTTPS. For local development, Nginx is exposed on:
+
+- `https://localhost` (port 443)
+
+At startup, Nginx auto-generates a local self-signed certificate if `nginx/ssl/server.crt` and `nginx/ssl/server.key` are missing.
+
+If your browser warns about the certificate, trust/accept it for local development so terminal connections can proceed.
+
+Notes:
+
+- Do **not** commit generated TLS files.
+- Keep `nginx/ssl/.gitkeep` only in version control.
+
 ## 💳 Billing Behavior
 
 - Checkout sessions are created from fixed plan metadata.
