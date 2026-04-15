@@ -186,14 +186,6 @@ export class VmService {
       result: "success",
     });
 
-    // Also publish SSH private key readiness so real-time UI channels can
-    // persist the key for terminal usage (in addition to HTTP response body).
-    await this.nats.publish("vm.ssh.ready", {
-      vmId: vm.id,
-      userId,
-      privateKey: vmKeyPair.privateKeyPem,
-    });
-
     this.logger.log(`VM ${vm.id} created and queued for provisioning`);
     return {
       ...vm,
