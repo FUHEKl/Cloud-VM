@@ -155,9 +155,6 @@ export class UserService {
       return planMatch[1] as SubscriptionPlanId;
     }
 
-    if (payment.amount >= 199) return SubscriptionPlanId.ENTERPRISE;
-    if (payment.amount >= 79) return SubscriptionPlanId.PRO;
-    if (payment.amount >= 29) return SubscriptionPlanId.STUDENT;
     return null;
   }
 
