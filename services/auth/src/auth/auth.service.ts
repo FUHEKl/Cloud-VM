@@ -3,6 +3,7 @@ import {
   ConflictException,
   UnauthorizedException,
   NotFoundException,
+  InternalServerErrorException,
   HttpException,
   HttpStatus,
   Logger,

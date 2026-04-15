@@ -1,10 +1,15 @@
 -- Align shared users schema with auth-owned MFA fields (idempotent safe patch)
-ALTER TABLE "users"
-  ADD COLUMN IF NOT EXISTS "mfaEnabled" BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS "mfaSecret" TEXT,
-  ADD COLUMN IF NOT EXISTS "mfaEnabledAt" TIMESTAMP(3),
-  ADD COLUMN IF NOT EXISTS "mfaRecoveryCodeHashes" TEXT[] DEFAULT ARRAY[]::TEXT[],
-  ADD COLUMN IF NOT EXISTS "mfaRecoveryCodesGeneratedAt" TIMESTAMP(3);
+DO $$
+BEGIN
+  IF to_regclass('public.users') IS NOT NULL THEN
+    ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "mfaEnabled" BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS "mfaSecret" TEXT,
+      ADD COLUMN IF NOT EXISTS "mfaEnabledAt" TIMESTAMP(3),
+      ADD COLUMN IF NOT EXISTS "mfaRecoveryCodeHashes" TEXT[] DEFAULT ARRAY[]::TEXT[],
+      ADD COLUMN IF NOT EXISTS "mfaRecoveryCodesGeneratedAt" TIMESTAMP(3);
+  END IF;
+END $$;
 
 -- Ensure shared MFA audit table exists for schema parity
 CREATE TABLE IF NOT EXISTS "mfa_audit_logs" (
@@ -24,13 +29,15 @@ CREATE INDEX IF NOT EXISTS "mfa_audit_logs_userId_createdAt_idx"
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'mfa_audit_logs_userId_fkey'
-  ) THEN
-    ALTER TABLE "mfa_audit_logs"
-      ADD CONSTRAINT "mfa_audit_logs_userId_fkey"
-      FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  IF to_regclass('public.users') IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'mfa_audit_logs_userId_fkey'
+    ) THEN
+      ALTER TABLE "mfa_audit_logs"
+        ADD CONSTRAINT "mfa_audit_logs_userId_fkey"
+        FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+    END IF;
   END IF;
 END $$;

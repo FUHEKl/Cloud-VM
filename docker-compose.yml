@@ -102,6 +102,7 @@ services:
       - "3005"
     environment:
       - DATABASE_URL=${PAYMENT_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
+      - PLAN_CATALOG_JSON=${PLAN_CATALOG_JSON}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - CORS_ORIGIN=${CORS_ORIGIN}
@@ -144,6 +145,7 @@ services:
       - "3003"
     environment:
       - DATABASE_URL=${USER_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
+      - PLAN_CATALOG_JSON=${PLAN_CATALOG_JSON}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
     depends_on:
@@ -160,6 +162,7 @@ services:
       - "3004"
     environment:
       - DATABASE_URL=${VM_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
+      - VM_SSH_KEY_SECRET=${VM_SSH_KEY_SECRET}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - NATS_URL=nats://nats:4222
