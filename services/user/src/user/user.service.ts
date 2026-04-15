@@ -226,25 +226,18 @@ export class UserService {
           orderBy: { createdAt: "desc" },
           take: 10,
         },
-        virtualMachines: {
-          where: {
-            status: { not: "DELETED" },
-          },
-          select: {
-            status: true,
-            cpu: true,
-            ramMb: true,
-            diskGb: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
       },
     });
 
     if (!user) {
       throw new NotFoundException("User not found");
     }
+
+    const resourceUsage = await this.prisma.virtualMachine.aggregate({
+      where: { userId, status: { not: "DELETED" as any } },
+      _sum: { cpu: true, ramMb: true, diskGb: true },
+      _count: { id: true },
+    });
 
     const latestSubscriptionPayment = user.payments[0] ?? null;
     const now = new Date();
@@ -258,8 +251,14 @@ export class UserService {
     const cycleStartedAt = latestSubscriptionPayment?.createdAt ?? new Date(now.getFullYear(), now.getMonth(), 1);
     const cycleEndsAt = this.getBillingCycleEnd(cycleStartedAt);
     const vmHoursIncluded = SUBSCRIPTION_QUOTAS[planId].vmHoursMonthly;
+
+    const vmsForHours = await this.prisma.virtualMachine.findMany({
+      where: { userId, createdAt: { gte: cycleStartedAt } },
+      select: { status: true, createdAt: true, updatedAt: true },
+    });
+
     const vmHoursUsed = this.estimateVmHoursUsed(
-      user.virtualMachines,
+      vmsForHours,
       cycleStartedAt,
       now < cycleEndsAt ? now : cycleEndsAt,
     );
@@ -267,9 +266,10 @@ export class UserService {
       ? Number.MAX_SAFE_INTEGER
       : Math.max(0, Number((vmHoursIncluded - vmHoursUsed).toFixed(2)));
 
-    const cpuUsed = user.virtualMachines.reduce((acc, vm) => acc + vm.cpu, 0);
-    const ramMbUsed = user.virtualMachines.reduce((acc, vm) => acc + vm.ramMb, 0);
-    const diskGbUsed = user.virtualMachines.reduce((acc, vm) => acc + vm.diskGb, 0);
+    const cpuUsed = resourceUsage._sum.cpu ?? 0;
+    const ramMbUsed = resourceUsage._sum.ramMb ?? 0;
+    const diskGbUsed = resourceUsage._sum.diskGb ?? 0;
+    const vmCount = resourceUsage._count.id ?? 0;
 
     const safeUser = this.excludePassword(user);
     const effectiveQuota = user.role === "ADMIN"
@@ -280,7 +280,7 @@ export class UserService {
       ...safeUser,
       quota: effectiveQuota,
       usage: {
-        vmCount: user.virtualMachines.length,
+        vmCount,
         cpuUsed,
         ramMbUsed,
         diskGbUsed,
