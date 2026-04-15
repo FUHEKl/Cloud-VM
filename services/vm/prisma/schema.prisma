@@ -29,6 +29,11 @@ model User {
   lastName      String
   role          Role           @default(USER)
   isActive      Boolean        @default(true)
+  mfaEnabled    Boolean        @default(false)
+  mfaSecret     String?
+  mfaEnabledAt  DateTime?
+  mfaRecoveryCodeHashes String[] @default([])
+  mfaRecoveryCodesGeneratedAt DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -38,6 +43,7 @@ model User {
   quota         UserQuota?
   payments      Payment[]
   notifications Notification[]
+  mfaAuditLogs  MfaAuditLog[]
 
   @@map("users")
 }
@@ -139,4 +145,18 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@map("notifications")
+}
+
+model MfaAuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  ip        String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("mfa_audit_logs")
 }
