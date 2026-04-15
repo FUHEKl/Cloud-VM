@@ -64,6 +64,32 @@ Create `.env` from `.env.example` and set required values (JWT secrets, DB crede
 
 Use Docker Compose from the project root.
 
+## 🧬 Shared PostgreSQL + Prisma Safety (Critical)
+
+This project uses **one shared PostgreSQL database** across multiple services (`auth`, `user`, `vm`, `payment`, `ai`).
+
+Because of that, a schema diff from a partial Prisma schema can generate destructive SQL.
+
+### Never do this
+
+- Do **not** run `prisma migrate dev` from `services/user` or `services/vm` (or any service with incomplete ownership of all DB objects) against shared environments.
+- Do **not** accept Prisma-generated `DROP COLUMN` / `DROP TABLE` changes for shared tables without explicit cross-service review.
+
+### Safe workflow
+
+- Use `prisma migrate deploy` in containers/startup for applying committed migrations.
+- Treat `auth` as the canonical owner of core shared tables (`users`, `refresh_tokens`, `ssh_keys`, `plans`, `virtual_machines`, `user_quotas`, `payments`, `notifications`) and MFA additions (`mfaEnabled`, `mfaSecret`, `mfaEnabledAt`, `mfaRecoveryCodeHashes`, `mfaRecoveryCodesGeneratedAt`, `mfa_audit_logs`).
+- `payment` owns `stripe_webhook_events`.
+- `user` and `vm` include schema-alignment migrations for shared parity, but should not introduce destructive changes to auth-owned objects.
+
+### Migrations added for safety
+
+- `services/payment/prisma/migrations/20260415000001_init_payment/` (creates `stripe_webhook_events`)
+- `services/user/prisma/migrations/20260415000002_align_shared_auth_schema/` (idempotent shared-schema alignment)
+- `services/vm/prisma/migrations/20260415000002_align_shared_auth_schema/` (idempotent shared-schema alignment)
+
+If you need to evolve shared tables, do it with coordinated migrations and review across all affected services.
+
 ### 4) Access
 
 - Frontend: `http://localhost:3000`
