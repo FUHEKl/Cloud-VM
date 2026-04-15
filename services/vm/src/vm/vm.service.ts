@@ -199,7 +199,7 @@ export class VmService {
     query?: { status?: string; search?: string; page?: number; limit?: number },
   ) {
     const page = query?.page ?? 1;
-    const limit = query?.limit ?? 20;
+    const limit = Math.min(query?.limit ?? 20, 100);
     const skip = (page - 1) * limit;
 
     const where: Record<string, any> = {};

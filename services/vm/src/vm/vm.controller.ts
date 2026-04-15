@@ -49,7 +49,7 @@ export class VmController {
       status,
       search,
       page: page ? parseInt(page, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
+      limit: limit ? Math.min(parseInt(limit, 10), 100) : undefined,
     });
   }
 
