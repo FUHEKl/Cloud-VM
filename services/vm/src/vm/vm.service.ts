@@ -106,6 +106,12 @@ export class VmService {
           where: { userId },
         });
 
+        if (role !== "ADMIN" && !quota) {
+          throw new ForbiddenException(
+            "No active subscription found. Please purchase a plan before creating VMs.",
+          );
+        }
+
         const activeVms = await tx.virtualMachine.count({
           where: {
             userId,
@@ -113,10 +119,10 @@ export class VmService {
           },
         });
 
-        const maxVms = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxVms ?? 3);
-        const maxCpu = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxCpu ?? 4);
-        const maxRamMb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxRamMb ?? 4096);
-        const maxDiskGb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxDiskGb ?? 50);
+        const maxVms = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxVms ?? 0);
+        const maxCpu = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxCpu ?? 0);
+        const maxRamMb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxRamMb ?? 0);
+        const maxDiskGb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxDiskGb ?? 0);
 
         if (activeVms >= maxVms) {
           throw new ForbiddenException(
