@@ -109,13 +109,6 @@ const PLAN_CATALOG: Record<PlanId, PaymentPlanConfig> = {
   },
 };
 
-const UNLIMITED_QUOTA = {
-  maxVms: 9999,
-  maxCpu: 9999,
-  maxRamMb: 999999,
-  maxDiskGb: 99999,
-};
-
 @Injectable()
 export class PaymentService {
   private readonly stripe: Stripe | null;
@@ -227,15 +220,21 @@ export class PaymentService {
   private async syncQuotaForPlan(userId: string, planId: AnyPlanId | null) {
     if (!planId) return;
 
-    const quota = planId === "unlimited" ? UNLIMITED_QUOTA : PLAN_CATALOG[planId].quota;
-    await this.prisma.userQuota.upsert({
-      where: { userId },
-      update: quota,
-      create: {
-        userId,
-        ...quota,
+    const url = `${this.getUserServiceUrl()}/users/internal/subscription-activate`;
+    const syncToken = this.getInterServiceSyncToken();
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-sync-token": syncToken,
       },
+      body: JSON.stringify({ userId, planId }),
     });
+
+    if (!response.ok) {
+      throw new InternalServerErrorException("Failed to activate subscription quota");
+    }
   }
 
   private async enforcePlanPurchaseRules(userId: string, requestedPlanId: PlanId) {

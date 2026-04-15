@@ -27,6 +27,11 @@ interface SyncUserPayload {
   mfaRecoveryCodesGeneratedAt?: string | null;
 }
 
+interface ActivateSubscriptionPayload {
+  userId: string;
+  planId: "student" | "pro" | "enterprise" | "unlimited";
+}
+
 @Controller("users/internal")
 export class UserInternalController {
   constructor(private readonly userService: UserService) {}
@@ -68,5 +73,25 @@ export class UserInternalController {
     }
 
     return this.userService.getInternalSubscriptionAccess(userId);
+  }
+
+  @Post("subscription-activate")
+  @HttpCode(HttpStatus.OK)
+  async activateSubscription(
+    @Headers("x-sync-token") syncToken: string | undefined,
+    @Body() payload: ActivateSubscriptionPayload,
+  ) {
+    this.assertSyncToken(syncToken);
+
+    if (!payload?.userId || !payload?.planId) {
+      throw new BadRequestException("Missing userId or planId");
+    }
+
+    const result = await this.userService.activateSubscriptionPlanFromInternal(
+      payload.userId,
+      payload.planId,
+    );
+
+    return { ok: true, ...result };
   }
 }
