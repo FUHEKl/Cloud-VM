@@ -141,6 +141,66 @@ const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async syncFromAuth(payload: {
+    id: string;
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    role?: "USER" | "ADMIN";
+    isActive?: boolean;
+    mfaEnabled?: boolean;
+    mfaSecret?: string | null;
+    mfaEnabledAt?: string | null;
+    mfaRecoveryCodeHashes?: string[];
+    mfaRecoveryCodesGeneratedAt?: string | null;
+  }) {
+    const role = payload.role === "ADMIN" ? "ADMIN" : "USER";
+
+    const user = await this.prisma.user.upsert({
+      where: { id: payload.id },
+      update: {
+        email: payload.email,
+        password: payload.password,
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        role,
+        isActive: payload.isActive ?? true,
+        mfaEnabled: payload.mfaEnabled ?? false,
+        mfaSecret: payload.mfaSecret ?? null,
+        mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
+        mfaRecoveryCodeHashes: payload.mfaRecoveryCodeHashes ?? [],
+        mfaRecoveryCodesGeneratedAt: payload.mfaRecoveryCodesGeneratedAt
+          ? new Date(payload.mfaRecoveryCodesGeneratedAt)
+          : null,
+      },
+      create: {
+        id: payload.id,
+        email: payload.email,
+        password: payload.password,
+        firstName: payload.firstName,
+        lastName: payload.lastName,
+        role,
+        isActive: payload.isActive ?? true,
+        mfaEnabled: payload.mfaEnabled ?? false,
+        mfaSecret: payload.mfaSecret ?? null,
+        mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
+        mfaRecoveryCodeHashes: payload.mfaRecoveryCodeHashes ?? [],
+        mfaRecoveryCodesGeneratedAt: payload.mfaRecoveryCodesGeneratedAt
+          ? new Date(payload.mfaRecoveryCodesGeneratedAt)
+          : null,
+      },
+    });
+
+    const targetPlan = role === "ADMIN"
+      ? SubscriptionPlanId.UNLIMITED
+      : SubscriptionPlanId.STUDENT;
+
+    await this.upsertQuota(user.id, targetPlan);
+
+    return user;
+  }
+
   private static readonly UNLIMITED_QUOTA = {
     maxVms: SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxVms,
     maxCpu: SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxCpu,

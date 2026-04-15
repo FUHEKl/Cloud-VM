@@ -308,6 +308,58 @@ export class AuthService {
     return timingSafeEqual(left, right);
   }
 
+  private getUserSyncUrl(): string {
+    if (process.env.USER_SERVICE_SYNC_URL?.trim()) {
+      return process.env.USER_SERVICE_SYNC_URL.trim();
+    }
+
+    const base = (process.env.USER_SERVICE_URL || "http://user:3003").replace(/\/+$/, "");
+    return `${base}/users/internal/sync`;
+  }
+
+  private async syncUserProjection(user: any): Promise<void> {
+    const syncToken = (process.env.INTER_SERVICE_SYNC_TOKEN || "").trim();
+    if (!syncToken) {
+      this.logger.warn("INTER_SERVICE_SYNC_TOKEN not set; skipping user projection sync");
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(this.getUserSyncUrl(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-sync-token": syncToken,
+        },
+        body: JSON.stringify({
+          id: user.id,
+          email: user.email,
+          password: user.password,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isActive: user.isActive,
+          mfaEnabled: user.mfaEnabled,
+          mfaSecret: user.mfaSecret,
+          mfaEnabledAt: user.mfaEnabledAt,
+          mfaRecoveryCodeHashes: user.mfaRecoveryCodeHashes,
+          mfaRecoveryCodesGeneratedAt: user.mfaRecoveryCodesGeneratedAt,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`sync failed with status ${response.status}: ${body}`);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async getPreviousLoginContext(userId: string): Promise<LoginContextPayload | null> {
     await this.ensureRedisConnected();
     const raw = await this.redis.get(this.getLoginContextKey(userId));
@@ -578,6 +630,12 @@ export class AuthService {
       },
     });
 
+    try {
+      await this.syncUserProjection(user);
+    } catch (error) {
+      this.logger.error(`User projection sync failed after register: ${(error as Error).message}`);
+    }
+
     const tokens = await this.generateTokens(user, req);
     await this.storeLoginContext(user.id, req);
 
@@ -617,6 +675,12 @@ export class AuthService {
     }
 
     await this.clearFailedLogins(dto.email);
+
+    try {
+      await this.syncUserProjection(user);
+    } catch (error) {
+      this.logger.error(`User projection sync failed after login: ${(error as Error).message}`);
+    }
 
     const anomaly = await this.evaluateLoginAnomaly(user.id, req);
     if (anomaly.detected) {
