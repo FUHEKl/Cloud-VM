@@ -544,26 +544,19 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
 
-    const freePlan = await this.prisma.plan.findFirst({
-      where: {
-        isActive: true,
-        name: {
-          equals: "free",
-          mode: "insensitive",
-        },
-      },
-      select: {
-        maxVms: true,
-        cpu: true,
-        ramMb: true,
-        diskGb: true,
-      },
-    });
+    const freePlanMaxVms = Number(process.env.AUTH_FREE_PLAN_MAX_VMS || "2");
+    const freePlanMaxCpu = Number(process.env.AUTH_FREE_PLAN_MAX_CPU || "2");
+    const freePlanMaxRamMb = Number(process.env.AUTH_FREE_PLAN_MAX_RAM_MB || "4096");
+    const freePlanMaxDiskGb = Number(process.env.AUTH_FREE_PLAN_MAX_DISK_GB || "40");
 
-    if (!freePlan) {
-      throw new HttpException(
-        "Registration unavailable: active 'free' plan is not configured",
-        HttpStatus.SERVICE_UNAVAILABLE,
+    if (
+      !Number.isFinite(freePlanMaxVms) || freePlanMaxVms < 1 ||
+      !Number.isFinite(freePlanMaxCpu) || freePlanMaxCpu < 1 ||
+      !Number.isFinite(freePlanMaxRamMb) || freePlanMaxRamMb < 512 ||
+      !Number.isFinite(freePlanMaxDiskGb) || freePlanMaxDiskGb < 5
+    ) {
+      throw new InternalServerErrorException(
+        "Invalid AUTH_FREE_PLAN_* configuration",
       );
     }
 
@@ -575,10 +568,10 @@ export class AuthService {
         lastName: dto.lastName,
         quota: {
           create: {
-            maxVms: freePlan.maxVms,
-            maxCpu: freePlan.cpu,
-            maxRamMb: freePlan.ramMb,
-            maxDiskGb: freePlan.diskGb,
+            maxVms: Math.floor(freePlanMaxVms),
+            maxCpu: Math.floor(freePlanMaxCpu),
+            maxRamMb: Math.floor(freePlanMaxRamMb),
+            maxDiskGb: Math.floor(freePlanMaxDiskGb),
           },
         },
       },
