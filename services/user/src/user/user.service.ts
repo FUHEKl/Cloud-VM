@@ -80,6 +80,11 @@ export class UserService {
     }
   }
 
+  private isCrossDomainPaymentDbEnabled(): boolean {
+    return (process.env.USER_ALLOW_CROSS_DOMAIN_PAYMENT_DB ?? "false")
+      .toLowerCase() === "true";
+  }
+
   private excludePassword(user: any) {
     const { password, ...userWithoutPassword } = user;
     return userWithoutPassword;
@@ -213,20 +218,25 @@ export class UserService {
   }
 
   async getProfile(userId: string) {
+    const paymentDbEnabled = this.isCrossDomainPaymentDbEnabled();
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: {
-        quota: true,
-        payments: {
-          where: {
-            status: {
-              in: ["paid", "admin_granted"],
+      include: paymentDbEnabled
+        ? {
+            quota: true,
+            payments: {
+              where: {
+                status: {
+                  in: ["paid", "admin_granted"],
+                },
+              },
+              orderBy: { createdAt: "desc" },
+              take: 10,
             },
+          }
+        : {
+            quota: true,
           },
-          orderBy: { createdAt: "desc" },
-          take: 10,
-        },
-      },
     });
 
     if (!user) {
@@ -239,13 +249,14 @@ export class UserService {
       _count: { id: true },
     });
 
-    const latestSubscriptionPayment = user.payments[0] ?? null;
+    const payments = paymentDbEnabled ? ((user as any).payments ?? []) : [];
+    const latestSubscriptionPayment = payments[0] ?? null;
     const now = new Date();
 
     const planId = this.resolvePlanForUser({
       role: user.role,
       quota: user.quota,
-      payments: user.payments,
+      payments,
     });
 
     const cycleStartedAt = latestSubscriptionPayment?.createdAt ?? new Date(now.getFullYear(), now.getMonth(), 1);
@@ -464,7 +475,7 @@ export class UserService {
     const finalPlan = user.role === "ADMIN" ? SubscriptionPlanId.UNLIMITED : dto.planId;
     const quota = await this.upsertQuota(id, finalPlan);
 
-    if (finalPlan !== SubscriptionPlanId.UNLIMITED) {
+    if (finalPlan !== SubscriptionPlanId.UNLIMITED && this.isCrossDomainPaymentDbEnabled()) {
       const plan = SUBSCRIPTION_QUOTAS[finalPlan];
       await this.prisma.payment.create({
         data: {
@@ -488,22 +499,34 @@ export class UserService {
   async getUserBillingSummary(id: string, actorRole?: string) {
     this.assertAdminRole(actorRole);
 
+    const paymentDbEnabled = this.isCrossDomainPaymentDbEnabled();
+
     const user = await this.prisma.user.findUnique({
       where: { id },
-      include: {
-        quota: true,
-        payments: {
-          orderBy: { createdAt: "desc" },
-          take: 20,
-        },
-      },
+      include: paymentDbEnabled
+        ? {
+            quota: true,
+            payments: {
+              orderBy: { createdAt: "desc" },
+              take: 20,
+            },
+          }
+        : {
+            quota: true,
+          },
     });
 
     if (!user) {
       throw new NotFoundException("User not found");
     }
 
-    const paidPayments = user.payments.filter((p) => p.status === "paid");
+    const payments: Array<{
+      status: string;
+      amount: number;
+      method?: string | null;
+      createdAt: Date;
+    }> = paymentDbEnabled ? ((user as any).payments ?? []) : [];
+    const paidPayments = payments.filter((p) => p.status === "paid");
     const totalSpent = paidPayments.reduce((acc, p) => acc + p.amount, 0);
     const lastPaid = paidPayments[0] ?? null;
 
@@ -512,13 +535,14 @@ export class UserService {
       subscription: this.resolvePlanForUser({
         role: user.role,
         quota: user.quota,
-        payments: user.payments,
+        payments,
       }),
       totalSpent,
       paidPaymentsCount: paidPayments.length,
-      pendingPaymentsCount: user.payments.filter((p) => p.status === "pending").length,
+      pendingPaymentsCount: payments.filter((p) => p.status === "pending").length,
       lastPaid,
-      recentPayments: user.payments,
+      recentPayments: payments,
+      billingSource: paymentDbEnabled ? "payments_db" : "quota_only",
     };
   }
 
@@ -529,6 +553,8 @@ export class UserService {
     search?: string,
   ) {
     this.assertAdminRole(actorRole);
+
+    const paymentDbEnabled = this.isCrossDomainPaymentDbEnabled();
 
     const skip = (page - 1) * limit;
 
@@ -542,55 +568,69 @@ export class UserService {
         }
       : {};
 
-    const [
-      recentPayments,
-      users,
-      totalUsers,
-      paidPayments,
-      pendingPayments,
-      totalRevenue,
-    ] = await Promise.all([
-      this.prisma.payment.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 50,
-        include: {
-          user: {
-            select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true },
-          },
-        },
-      }),
-      this.prisma.user.findMany({
-        where: userWhere,
-        include: {
-          quota: true,
-          payments: {
-            where: {
-              status: {
-                in: ["paid", "admin_granted"],
+    const [recentPayments, users, totalUsers, paidPayments, pendingPayments, totalRevenue] = paymentDbEnabled
+      ? await Promise.all([
+          this.prisma.payment.findMany({
+            orderBy: { createdAt: "desc" },
+            take: 50,
+            include: {
+              user: {
+                select: { id: true, email: true, firstName: true, lastName: true, role: true, isActive: true },
+              },
+            },
+          }),
+          this.prisma.user.findMany({
+            where: userWhere,
+            include: {
+              quota: true,
+              payments: {
+                where: {
+                  status: {
+                    in: ["paid", "admin_granted"],
+                  },
+                },
+                orderBy: { createdAt: "desc" },
+                take: 5,
               },
             },
             orderBy: { createdAt: "desc" },
-            take: 5,
-          },
-        },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
-      }),
-      this.prisma.user.count(),
-      this.prisma.payment.count({ where: { status: "paid" } }),
-      this.prisma.payment.count({ where: { status: "pending" } }),
-      this.prisma.payment.aggregate({ where: { status: "paid" }, _sum: { amount: true } }),
-    ]);
+            skip,
+            take: limit,
+          }),
+          this.prisma.user.count(),
+          this.prisma.payment.count({ where: { status: "paid" } }),
+          this.prisma.payment.count({ where: { status: "pending" } }),
+          this.prisma.payment.aggregate({ where: { status: "paid" }, _sum: { amount: true } }),
+        ])
+      : await Promise.all([
+          Promise.resolve([] as any[]),
+          this.prisma.user.findMany({
+            where: userWhere,
+            include: {
+              quota: true,
+            },
+            orderBy: { createdAt: "desc" },
+            skip,
+            take: limit,
+          }),
+          this.prisma.user.count(),
+          Promise.resolve(0),
+          Promise.resolve(0),
+          Promise.resolve({ _sum: { amount: 0 } }),
+        ]);
 
-    const usersWithSubscription = users.map((user) => ({
-      ...this.excludePassword(user),
-      subscription: this.resolvePlanForUser({
-        role: user.role,
-        quota: user.quota,
-        payments: user.payments,
-      }),
-    }));
+    const usersWithSubscription = users.map((user: any) => {
+      const userPayments = paymentDbEnabled ? (user.payments ?? []) : [];
+
+      return {
+        ...this.excludePassword(user),
+        subscription: this.resolvePlanForUser({
+          role: user.role,
+          quota: user.quota,
+          payments: userPayments,
+        }),
+      };
+    });
 
     return {
       overview: {
@@ -603,6 +643,7 @@ export class UserService {
       recentPayments,
       page,
       limit,
+      billingSource: paymentDbEnabled ? "payments_db" : "quota_only",
     };
   }
 
