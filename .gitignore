@@ -22,5 +22,6 @@ nginx/ssl/*.crt
 
 # Keep only OpenNebula scripts in public repo
 scripts/*
+!scripts/admin_mfa_smoke_test.py
 !scripts/opennebula/
 !scripts/opennebula/**
