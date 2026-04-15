@@ -7,28 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum VmStatus {
-  PENDING
-  RUNNING
-  STOPPED
-  SUSPENDED
-  ERROR
-  DELETED
-}
-
-model VirtualMachine {
-  id        String   @id @default(uuid())
-  userId    String
-  status    VmStatus
-  cpu       Int
-  ramMb     Int
-  diskGb    Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("virtual_machines")
-}
-
 model UserQuota {
   id        String @id @default(uuid())
   userId    String @unique

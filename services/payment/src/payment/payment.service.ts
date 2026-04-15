@@ -138,41 +138,10 @@ export class PaymentService {
     return PLAN_CATALOG[planId].rank;
   }
 
-  private getVmHoursForPlan(planId: AnyPlanId): number {
-    if (planId === "unlimited") return Number.MAX_SAFE_INTEGER;
-    return PLAN_CATALOG[planId].vmHoursMonthly;
-  }
-
   private getBillingCycleEnd(startedAt: Date): Date {
     return new Date(startedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   }
 
-  private estimateVmHoursUsed(
-    vms: Array<{
-      status: string;
-      createdAt: Date;
-      updatedAt: Date;
-    }>,
-    cycleStart: Date,
-    cycleEnd: Date,
-  ): number {
-    let totalHours = 0;
-
-    for (const vm of vms) {
-      const started = vm.createdAt > cycleStart ? vm.createdAt : cycleStart;
-      const defaultEnded = cycleEnd;
-      const ended = vm.status === "RUNNING"
-        ? defaultEnded
-        : vm.updatedAt < defaultEnded
-          ? vm.updatedAt
-          : defaultEnded;
-
-      if (ended <= started) continue;
-      totalHours += (ended.getTime() - started.getTime()) / (1000 * 60 * 60);
-    }
-
-    return Number(totalHours.toFixed(2));
-  }
 
   private async syncQuotaForPlan(userId: string, planId: AnyPlanId | null) {
     if (!planId) return;
@@ -215,24 +184,9 @@ export class PaymentService {
 
     if (requestedRank > currentRank) return;
 
-    const planVms = await this.prisma.virtualMachine.findMany({
-      where: {
-        userId,
-        createdAt: { lt: cycleEnd },
-      },
-      select: {
-        status: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
-    const vmHoursUsed = this.estimateVmHoursUsed(planVms, cycleStart, now);
-    const includedHours = this.getVmHoursForPlan(currentPlanId);
-
-    if (requestedPlanId === currentPlanId && vmHoursUsed < includedHours) {
+    if (requestedPlanId === currentPlanId) {
       throw new BadRequestException(
-        `You already have the ${currentPlanId} plan for the current billing cycle. You can renew it when the cycle ends or after consuming ${includedHours} VM hours. Currently used: ${vmHoursUsed}h.`,
+        `You already have the ${currentPlanId} plan for the current billing cycle. You can renew it when the cycle ends.`,
       );
     }
 
