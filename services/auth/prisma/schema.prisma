@@ -85,22 +85,6 @@ model SshKey {
   @@map("ssh_keys")
 }
 
-model Plan {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  maxVms      Int      @default(3)
-  cpu         Int
-  ramMb       Int
-  diskGb      Int
-  priceMonthly Float
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-
-  virtualMachines VirtualMachine[]
-
-  @@map("plans")
-}
-
 model VirtualMachine {
   id            String   @id @default(uuid())
   name          String
@@ -114,7 +98,6 @@ model VirtualMachine {
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId        String?
-  plan          Plan?    @relation(fields: [planId], references: [id])
   sshHost       String?
   sshPort       Int?     @default(22)
   sshUsername   String?  @default("root")
