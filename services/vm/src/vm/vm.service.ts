@@ -315,6 +315,10 @@ export class VmService {
   async deleteVm(vmId: string, userId: string, role: string) {
     const vm = await this.getVm(vmId, userId, role);
 
+    if (vm.status === VmStatus.DELETED) {
+      throw new BadRequestException(`VM '${vm.name}' is already deleted`);
+    }
+
     // Publish to NATS so worker can destroy the VM on the hypervisor
     await this.nats.publish("vm.delete", {
       vmId: vm.id,
