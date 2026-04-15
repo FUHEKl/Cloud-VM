@@ -42,6 +42,11 @@ export class PaymentController {
     return this.paymentService.listPayments(user.userId);
   }
 
+  @Get("plans")
+  async listPublicPlans() {
+    return this.paymentService.getPublicPlans();
+  }
+
   @Post("webhook")
   @HttpCode(200)
   async handleWebhook(

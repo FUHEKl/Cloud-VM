@@ -28,6 +28,21 @@ type PaymentPlanConfig = ManagedPlanConfig & {
   amountMilli: number;
 };
 
+type PublicPlan = {
+  id: PlanId;
+  name: string;
+  amountDt: number;
+  rank: number;
+  vmHoursMonthly: number;
+  quota: {
+    maxVms: number;
+    maxCpu: number;
+    maxRamMb: number;
+    maxDiskGb: number;
+  };
+  features: string[];
+};
+
 type SubscriptionAccessSnapshot = {
   activePlanId: AnyPlanId | null;
   canPurchaseSameOrLower: boolean;
@@ -380,6 +395,27 @@ export class PaymentService {
       where: { userId },
       orderBy: { createdAt: "desc" },
     });
+  }
+
+  getPublicPlans(): PublicPlan[] {
+    return (Object.keys(PLAN_CATALOG) as PlanId[])
+      .map((planId) => {
+        const plan = PLAN_CATALOG[planId];
+        return {
+          id: planId,
+          name: PLAN_LABELS[planId],
+          amountDt: plan.amountDt,
+          rank: plan.rank,
+          vmHoursMonthly: plan.vmHoursMonthly,
+          quota: { ...plan.quota },
+          features: [
+            `${plan.quota.maxVms} VMs`,
+            `${plan.vmHoursMonthly} VM hours/month`,
+            `${plan.quota.maxCpu} vCPU · ${Math.round(plan.quota.maxRamMb / 1024)} GB RAM · ${plan.quota.maxDiskGb} GB disk`,
+          ],
+        };
+      })
+      .sort((a, b) => a.rank - b.rank);
   }
 
   async confirmCheckoutSession(userId: string, sessionId: string) {

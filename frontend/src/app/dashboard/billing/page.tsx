@@ -9,7 +9,7 @@ import type { SubscriptionPlanId, UserProfileDetails } from "@/types";
 
 type PlanId = "student" | "pro" | "enterprise";
 
-const plans: Array<{
+const fallbackPlans: Array<{
   id: PlanId;
   name: string;
   dt: number;
@@ -35,6 +35,21 @@ const plans: Array<{
   },
 ];
 
+interface PublicPlanCatalogItem {
+  id: PlanId;
+  name: string;
+  amountDt: number;
+  rank: number;
+  vmHoursMonthly: number;
+  quota: {
+    maxVms: number;
+    maxCpu: number;
+    maxRamMb: number;
+    maxDiskGb: number;
+  };
+  features: string[];
+}
+
 interface PaymentRecord {
   id: string;
   amount: number;
@@ -57,13 +72,40 @@ export default function BillingPage() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
+  const [plans, setPlans] = useState<PublicPlanCatalogItem[]>(
+    fallbackPlans.map((plan, index) => ({
+      id: plan.id,
+      name: plan.name,
+      amountDt: plan.dt,
+      rank: index + 1,
+      vmHoursMonthly: plan.id === "student" ? 60 : plan.id === "pro" ? 220 : 900,
+      quota:
+        plan.id === "student"
+          ? { maxVms: 2, maxCpu: 2, maxRamMb: 4096, maxDiskGb: 40 }
+          : plan.id === "pro"
+            ? { maxVms: 6, maxCpu: 8, maxRamMb: 16384, maxDiskGb: 120 }
+            : { maxVms: 20, maxCpu: 32, maxRamMb: 65536, maxDiskGb: 400 },
+      features: plan.features,
+    })),
+  );
 
   const orderedPlans = useMemo(() => {
     if (!preferredPlan) return plans;
     const preferred = plans.find((p) => p.id === preferredPlan);
     if (!preferred) return plans;
     return [preferred, ...plans.filter((p) => p.id !== preferred.id)];
-  }, [preferredPlan]);
+  }, [preferredPlan, plans]);
+
+  const loadPlans = useCallback(async () => {
+    try {
+      const { data } = await api.get<PublicPlanCatalogItem[]>("/payments/plans");
+      if (Array.isArray(data) && data.length > 0) {
+        setPlans(data);
+      }
+    } catch {
+      // keep local fallback plans
+    }
+  }, []);
 
   const loadPayments = useCallback(async () => {
     setLoadingPayments(true);
@@ -87,9 +129,10 @@ export default function BillingPage() {
   }, []);
 
   useEffect(() => {
+    void loadPlans();
     void loadPayments();
     void loadProfileDetails();
-  }, [loadPayments, loadProfileDetails, status]);
+  }, [loadPlans, loadPayments, loadProfileDetails, status]);
 
   useEffect(() => {
     if (status !== "success" || !successSessionId || isAdmin) return;
@@ -144,13 +187,35 @@ export default function BillingPage() {
     const startedAt = Date.now();
     const interval = setInterval(() => {
       void loadPayments();
+      void loadProfileDetails();
       if (Date.now() - startedAt > 20_000) {
         clearInterval(interval);
       }
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [status, loadPayments]);
+  }, [status, loadPayments, loadProfileDetails]);
+
+  const formatPaymentMethod = (method?: string | null) => {
+    if (!method) return "-";
+
+    const stripeSessionMatch = method.match(/^stripe:([^:]+)(:|$)/i);
+    const planMatch = method.match(/:plan:(student|pro|enterprise|unlimited)/i);
+
+    if (stripeSessionMatch) {
+      const sessionId = stripeSessionMatch[1] || "";
+      const tail = sessionId.length > 8 ? sessionId.slice(-8) : sessionId;
+      const planLabel = planMatch?.[1] ? ` · ${planMatch[1].toUpperCase()}` : "";
+      return `stripe · session …${tail}${planLabel}`;
+    }
+
+    if (method.startsWith("admin:grant:")) {
+      const grantedPlan = method.split(":")[2] || "unknown";
+      return `admin grant · ${grantedPlan.toUpperCase()}`;
+    }
+
+    return method.length > 48 ? `${method.slice(0, 48)}…` : method;
+  };
 
   const startCheckout = async (planId: PlanId) => {
     setError("");
@@ -231,7 +296,7 @@ export default function BillingPage() {
           {orderedPlans.map((plan) => (
             <div key={plan.id} className="cyber-card">
               <h3 className="text-lg font-semibold text-cyber-text mb-1">{plan.name}</h3>
-              <p className="text-3xl font-bold text-cyber-green mb-4">{plan.dt} DT<span className="text-sm text-cyber-text-dim"> / month</span></p>
+              <p className="text-3xl font-bold text-cyber-green mb-4">{plan.amountDt} DT<span className="text-sm text-cyber-text-dim"> / month</span></p>
               <ul className="space-y-2 mb-5 text-sm text-cyber-text-dim">
                 {plan.features.map((f) => (
                   <li key={f}>• {f}</li>
@@ -242,7 +307,7 @@ export default function BillingPage() {
                 disabled={loadingPlan !== null || !isPlanSelectable(plan.id)}
                 className="cyber-btn-primary w-full disabled:opacity-50"
               >
-                {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.dt} DT`}
+                {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.amountDt} DT`}
               </button>
               {!isPlanSelectable(plan.id) && (
                 <p className="text-xs text-cyber-orange mt-2">
@@ -281,7 +346,7 @@ export default function BillingPage() {
                     <td className="py-2 pr-4 text-cyber-text">{new Date(p.createdAt).toLocaleString()}</td>
                     <td className="py-2 pr-4 text-cyber-text">{p.amount} {p.currency}</td>
                     <td className="py-2 pr-4 text-cyber-text">{p.status}</td>
-                    <td className="py-2 text-cyber-text-dim break-all">{p.method || "-"}</td>
+                    <td className="py-2 text-cyber-text-dim break-all">{formatPaymentMethod(p.method)}</td>
                   </tr>
                 ))}
               </tbody>
