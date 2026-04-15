@@ -8,6 +8,7 @@ __pycache__/
 .venv/
 coverage/
 .turbo/
+*.code-workspace
 
 # Public-repo hygiene
 rapport/

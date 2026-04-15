@@ -6,6 +6,23 @@ This document describes the security controls implemented across CloudVM, mapped
 
 ---
 
+## Security Contact / Vulnerability Reporting
+
+If you discover a security issue, please report it privately:
+
+- Email: `brahmi.mouhamedrayen@hotmail.com`
+- Discord: `fuheki`
+
+Please include:
+- affected component/service,
+- reproduction steps,
+- impact summary,
+- any suggested mitigation.
+
+Do not open public issues for unpatched security vulnerabilities.
+
+---
+
 ## Layer 1 — Authentication & Token Security
 
 ### 1.1 Access token fingerprinting

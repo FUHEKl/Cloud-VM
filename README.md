@@ -2,6 +2,14 @@
 
 CloudVM is a microservices-based platform for provisioning and managing virtual machines on OpenNebula with a modern web dashboard, role-based administration, secure authentication, and AI-assisted operations.
 
+## 📌 Project Status
+
+**Academic prototype (PFE)** — this repository is published for portfolio/review purposes and is not intended as a production-ready managed cloud service.
+
+## ⚠️ Production Use Warning
+
+This project is provided as an academic prototype. Before exposing it to the public internet or using it in production, additional hardening and operations controls are required (network isolation, secret management, least-privilege runtime policies, centralized monitoring, and formal security review).
+
 ## 🚀 Core Capabilities
 
 - **User and admin authentication** (JWT + refresh tokens)
@@ -95,4 +103,16 @@ The AI service includes:
 
 ## 📜 License
 
-Academic project (PFE). Add your final license choice before release if required by your institution.
+This repository is released under an **All Rights Reserved** policy.
+
+- See `LICENSE.md` for details.
+- No permission is granted to copy, modify, distribute, or use this code outside explicit written authorization.
+
+## 🤝 Contribution & Conduct
+
+- Contribution policy: see `CONTRIBUTING.md` (currently read-only showcase).
+- Community behavior expectations: see `CODE_OF_CONDUCT.md`.
+
+## 🆘 Support
+
+For usage questions and security reports, see `SUPPORT.md`.
