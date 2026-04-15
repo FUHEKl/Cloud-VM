@@ -7,11 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  USER
-  ADMIN
-}
-
 enum VmStatus {
   PENDING
   RUNNING
@@ -19,56 +14,6 @@ enum VmStatus {
   SUSPENDED
   ERROR
   DELETED
-}
-
-model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  password      String
-  firstName     String
-  lastName      String
-  role          Role           @default(USER)
-  isActive      Boolean        @default(true)
-  mfaEnabled    Boolean        @default(false)
-  mfaSecret     String?
-  mfaEnabledAt  DateTime?
-  mfaRecoveryCodeHashes String[] @default([])
-  mfaRecoveryCodesGeneratedAt DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-
-  refreshTokens RefreshToken[]
-  sshKeys       SshKey[]
-  virtualMachines VirtualMachine[]
-  quota         UserQuota?
-  payments      Payment[]
-  notifications Notification[]
-  mfaAuditLogs  MfaAuditLog[]
-
-  @@map("users")
-}
-
-model RefreshToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  @@map("refresh_tokens")
-}
-
-model SshKey {
-  id          String   @id @default(uuid())
-  name        String
-  publicKey   String   @db.Text
-  fingerprint String
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-
-  @@map("ssh_keys")
 }
 
 model Plan {
@@ -98,7 +43,6 @@ model VirtualMachine {
   ipAddress     String?
   osTemplate    String
   userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId        String?
   plan          Plan?    @relation(fields: [planId], references: [id])
   sshHost       String?
@@ -113,50 +57,10 @@ model VirtualMachine {
 model UserQuota {
   id        String @id @default(uuid())
   userId    String @unique
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   maxVms    Int    @default(3)
   maxCpu    Int    @default(4)
   maxRamMb  Int    @default(4096)
   maxDiskGb Int    @default(50)
 
   @@map("user_quotas")
-}
-
-model Payment {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amount    Float
-  currency  String   @default("TND")
-  status    String   @default("pending")
-  method    String?
-  createdAt DateTime @default(now())
-
-  @@map("payments")
-}
-
-model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String
-  message   String
-  isRead    Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  @@map("notifications")
-}
-
-model MfaAuditLog {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action    String
-  ip        String?
-  userAgent String?
-  metadata  Json?
-  createdAt DateTime @default(now())
-
-  @@index([userId, createdAt])
-  @@map("mfa_audit_logs")
 }

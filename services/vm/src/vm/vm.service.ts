@@ -252,9 +252,6 @@ export class VmService {
       where: { id: vmId },
       include: {
         plan: true,
-        user: {
-          select: { id: true, email: true, firstName: true, lastName: true },
-        },
       },
     });
 
