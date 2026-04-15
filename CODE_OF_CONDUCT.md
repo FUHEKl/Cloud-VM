@@ -2,7 +2,7 @@
 
 ## Our Commitment
 
-We are committed to providing a respectful, harassment-free environment for everyone who interacts with this project, regardless of age, body size, disability, ethnicity, gender identity/expression, experience level, nationality, personal appearance, race, religion, or sexual identity/orientation.
+We are committed to providing a respectful, harassment-free environment for everyone who interacts with this project, regardless of age, body size, disability, ethnicity, experience level, nationality, personal appearance, race, or religion.
 
 ## Expected Behavior
 
