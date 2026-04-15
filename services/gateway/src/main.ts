@@ -217,10 +217,11 @@ async function bootstrap() {
 
       return { allowed: true, ip };
     } catch (error) {
+      const failOpen = (process.env.WS_RATELIMIT_FAIL_BEHAVIOR || "open").toLowerCase() !== "closed";
       console.warn(
-        `WS rate-limit Redis unavailable, allowing request (${(error as Error).message})`,
+        `WS rate-limit Redis unavailable, ${failOpen ? "allowing" : "blocking"} request (${(error as Error).message})`,
       );
-      return { allowed: true, ip };
+      return { allowed: failOpen, ip };
     }
   };
 
