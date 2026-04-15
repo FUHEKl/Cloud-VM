@@ -2,6 +2,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   Matches,
   MaxLength,
   Min,
@@ -17,14 +18,17 @@ export class CreateVmDto {
 
   @IsInt()
   @Min(1)
+  @Max(32)
   cpu!: number;
 
   @IsInt()
   @Min(512)
+  @Max(65536)
   ramMb!: number;
 
   @IsInt()
   @Min(5)
+  @Max(400)
   diskGb!: number;
 
   @IsString()
