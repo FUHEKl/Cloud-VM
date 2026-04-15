@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   InternalServerErrorException,
+  ConflictException,
   Logger,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -12,6 +13,7 @@ import { CreateVmDto } from "./dto/create-vm.dto";
 import { Prisma, VmStatus } from "@prisma/client";
 import { generateKeyPairSync } from "crypto";
 import sshpk from "sshpk";
+import { decryptVmPrivateKey, encryptVmPrivateKey } from "./vm-ssh-key.crypto";
 
 @Injectable()
 export class VmService {
@@ -86,13 +88,16 @@ export class VmService {
 
   async createVm(dto: CreateVmDto, userId: string, role: string) {
     const vmKeyPair = this.generateVmSshKeyPair();
+    const encryptedPrivateKey = encryptVmPrivateKey(vmKeyPair.privateKeyPem);
 
     this.logger.log(
       `Generated VM SSH key pair (public prefix=${vmKeyPair.publicKeySsh.split(" ")[0]}, length=${vmKeyPair.publicKeySsh.length})`,
     );
 
-    const vm = await this.prisma.$transaction(
-      async (tx) => {
+    let vm;
+    try {
+      vm = await this.prisma.$transaction(
+        async (tx) => {
         // SECURITY: per-user transaction lock prevents TOCTOU quota bypass
         // when concurrent create requests hit at the same time.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
@@ -158,11 +163,21 @@ export class VmService {
             planId: dto.planId || null,
             status: VmStatus.PENDING,
             sshUsername: "cloudvm",
+            sshPrivateKeyEncrypted: encryptedPrivateKey,
           },
         });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException("You already have a VM with this name");
+      }
+      throw error;
+    }
 
     // Publish to NATS for the worker to create the VM
     this.logger.log(
@@ -269,6 +284,43 @@ export class VmService {
     }
 
     return vm;
+  }
+
+  async getVmSshPrivateKey(vmId: string, userId: string, role: string) {
+    const vm = await this.prisma.virtualMachine.findUnique({
+      where: { id: vmId },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        sshPrivateKeyEncrypted: true,
+      },
+    });
+
+    if (!vm) {
+      throw new NotFoundException("Virtual machine not found");
+    }
+
+    if (role !== "ADMIN" && vm.userId !== userId) {
+      throw new ForbiddenException("Access denied");
+    }
+
+    if (!vm.sshPrivateKeyEncrypted) {
+      throw new NotFoundException("SSH private key is not available for this VM");
+    }
+
+    let privateKey: string;
+    try {
+      privateKey = decryptVmPrivateKey(vm.sshPrivateKeyEncrypted);
+    } catch {
+      throw new InternalServerErrorException("Failed to decrypt SSH private key");
+    }
+
+    return {
+      vmId: vm.id,
+      vmName: vm.name,
+      privateKey,
+    };
   }
 
   async vmAction(vmId: string, action: string, userId: string, role: string) {

@@ -148,19 +148,30 @@ export class NatsService implements OnModuleInit {
 
       if (status === "DELETED") {
         try {
-          const deleted = await this.prisma.virtualMachine.deleteMany({ where: { id: vmId } });
-          if (deleted.count === 0) {
+          const updated = await this.prisma.virtualMachine.updateMany({
+            where: { id: vmId },
+            data: {
+              status: VmStatus.DELETED,
+              stoppedAt: new Date(),
+            },
+          });
+          if (updated.count === 0) {
             this.logger.warn(`Skip DELETED sync: VM ${vmId} not found in this DB`);
           } else {
-            this.logger.log(`Hard-deleted VM ${vmId} from DB`);
+            this.logger.log(`Marked VM ${vmId} as DELETED in DB`);
           }
         } catch (error) {
-          this.logger.error(`Failed to hard-delete VM ${vmId}`, error);
+          this.logger.error(`Failed to mark VM ${vmId} as DELETED`, error);
         }
         return;
       }
 
       const updateData: Record<string, any> = { status: status as VmStatus };
+      if (status === "STOPPED" || status === "SUSPENDED" || status === "ERROR") {
+        updateData.stoppedAt = new Date();
+      } else if (status === "RUNNING") {
+        updateData.stoppedAt = null;
+      }
       if (ipAddress) updateData.ipAddress = ipAddress;
       if (oneVmId)   updateData.oneVmId   = oneVmId;
       if (sshHost)   updateData.sshHost   = sshHost;

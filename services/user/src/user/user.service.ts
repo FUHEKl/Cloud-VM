@@ -15,6 +15,105 @@ import {
 } from "./dto/admin-set-subscription.dto";
 import * as bcrypt from "bcrypt";
 
+type ManagedPlanId =
+  | SubscriptionPlanId.STUDENT
+  | SubscriptionPlanId.PRO
+  | SubscriptionPlanId.ENTERPRISE;
+
+type ManagedPlanConfig = {
+  maxVms: number;
+  maxCpu: number;
+  maxRamMb: number;
+  maxDiskGb: number;
+  monthlyPriceDt: number;
+  vmHoursMonthly: number;
+  rank: number;
+};
+
+function loadManagedSubscriptionCatalogFromEnv(): Record<ManagedPlanId, ManagedPlanConfig> {
+  const raw = process.env.PLAN_CATALOG_JSON;
+  if (!raw) {
+    throw new Error("Missing PLAN_CATALOG_JSON");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Invalid PLAN_CATALOG_JSON: must be valid JSON");
+  }
+
+  const record = parsed as Record<string, {
+    amountDt: number;
+    rank: number;
+    vmHoursMonthly: number;
+    quota: {
+      maxVms: number;
+      maxCpu: number;
+      maxRamMb: number;
+      maxDiskGb: number;
+    };
+  }>;
+
+  const requiredPlans: ManagedPlanId[] = [
+    SubscriptionPlanId.STUDENT,
+    SubscriptionPlanId.PRO,
+    SubscriptionPlanId.ENTERPRISE,
+  ];
+
+  for (const planId of requiredPlans) {
+    const cfg = record?.[planId];
+    if (!cfg) {
+      throw new Error(`PLAN_CATALOG_JSON missing '${planId}' config`);
+    }
+
+    if (
+      !Number.isFinite(cfg.amountDt) || cfg.amountDt <= 0 ||
+      !Number.isFinite(cfg.rank) || cfg.rank < 1 ||
+      !Number.isFinite(cfg.vmHoursMonthly) || cfg.vmHoursMonthly <= 0 ||
+      !cfg.quota ||
+      !Number.isFinite(cfg.quota.maxVms) || cfg.quota.maxVms < 1 ||
+      !Number.isFinite(cfg.quota.maxCpu) || cfg.quota.maxCpu < 1 ||
+      !Number.isFinite(cfg.quota.maxRamMb) || cfg.quota.maxRamMb < 512 ||
+      !Number.isFinite(cfg.quota.maxDiskGb) || cfg.quota.maxDiskGb < 5
+    ) {
+      throw new Error(`Invalid PLAN_CATALOG_JSON values for '${planId}'`);
+    }
+  }
+
+  return {
+    [SubscriptionPlanId.STUDENT]: {
+      maxVms: record.student.quota.maxVms,
+      maxCpu: record.student.quota.maxCpu,
+      maxRamMb: record.student.quota.maxRamMb,
+      maxDiskGb: record.student.quota.maxDiskGb,
+      monthlyPriceDt: record.student.amountDt,
+      vmHoursMonthly: record.student.vmHoursMonthly,
+      rank: record.student.rank,
+    },
+    [SubscriptionPlanId.PRO]: {
+      maxVms: record.pro.quota.maxVms,
+      maxCpu: record.pro.quota.maxCpu,
+      maxRamMb: record.pro.quota.maxRamMb,
+      maxDiskGb: record.pro.quota.maxDiskGb,
+      monthlyPriceDt: record.pro.amountDt,
+      vmHoursMonthly: record.pro.vmHoursMonthly,
+      rank: record.pro.rank,
+    },
+    [SubscriptionPlanId.ENTERPRISE]: {
+      maxVms: record.enterprise.quota.maxVms,
+      maxCpu: record.enterprise.quota.maxCpu,
+      maxRamMb: record.enterprise.quota.maxRamMb,
+      maxDiskGb: record.enterprise.quota.maxDiskGb,
+      monthlyPriceDt: record.enterprise.amountDt,
+      vmHoursMonthly: record.enterprise.vmHoursMonthly,
+      rank: record.enterprise.rank,
+    },
+  };
+}
+
+const MANAGED_SUBSCRIPTION_CATALOG = loadManagedSubscriptionCatalogFromEnv();
+
 const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
   maxVms: number;
   maxCpu: number;
@@ -24,33 +123,9 @@ const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
   vmHoursMonthly: number;
   rank: number;
 }> = {
-  [SubscriptionPlanId.STUDENT]: {
-    maxVms: 2,
-    maxCpu: 2,
-    maxRamMb: 4096,
-    maxDiskGb: 40,
-    monthlyPriceDt: 29,
-    vmHoursMonthly: 60,
-    rank: 1,
-  },
-  [SubscriptionPlanId.PRO]: {
-    maxVms: 6,
-    maxCpu: 8,
-    maxRamMb: 16384,
-    maxDiskGb: 120,
-    monthlyPriceDt: 79,
-    vmHoursMonthly: 220,
-    rank: 2,
-  },
-  [SubscriptionPlanId.ENTERPRISE]: {
-    maxVms: 20,
-    maxCpu: 32,
-    maxRamMb: 65536,
-    maxDiskGb: 400,
-    monthlyPriceDt: 199,
-    vmHoursMonthly: 900,
-    rank: 3,
-  },
+  [SubscriptionPlanId.STUDENT]: MANAGED_SUBSCRIPTION_CATALOG[SubscriptionPlanId.STUDENT],
+  [SubscriptionPlanId.PRO]: MANAGED_SUBSCRIPTION_CATALOG[SubscriptionPlanId.PRO],
+  [SubscriptionPlanId.ENTERPRISE]: MANAGED_SUBSCRIPTION_CATALOG[SubscriptionPlanId.ENTERPRISE],
   [SubscriptionPlanId.UNLIMITED]: {
     maxVms: 9999,
     maxCpu: 9999,
@@ -164,7 +239,7 @@ export class UserService {
     vms: Array<{
       status: string;
       createdAt: Date;
-      updatedAt: Date;
+      stoppedAt: Date | null;
     }>,
     cycleStart: Date,
     cycleEnd: Date,
@@ -173,10 +248,11 @@ export class UserService {
 
     for (const vm of vms) {
       const started = vm.createdAt > cycleStart ? vm.createdAt : cycleStart;
+      const nonRunningEnd = vm.stoppedAt ?? cycleEnd;
       const ended = vm.status === "RUNNING"
         ? cycleEnd
-        : vm.updatedAt < cycleEnd
-          ? vm.updatedAt
+        : nonRunningEnd < cycleEnd
+          ? nonRunningEnd
           : cycleEnd;
 
       if (ended <= started) continue;
@@ -216,8 +292,12 @@ export class UserService {
     const vmHoursIncluded = SUBSCRIPTION_QUOTAS[planId].vmHoursMonthly;
 
     const vmsForHours = await this.prisma.virtualMachine.findMany({
-      where: { userId, createdAt: { gte: cycleStartedAt } },
-      select: { status: true, createdAt: true, updatedAt: true },
+      where: {
+        userId,
+        createdAt: { gte: cycleStartedAt },
+        status: { not: "DELETED" as any },
+      },
+      select: { status: true, createdAt: true, stoppedAt: true },
     });
 
     const vmHoursUsed = this.estimateVmHoursUsed(

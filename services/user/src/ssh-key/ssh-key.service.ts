@@ -3,10 +3,12 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateSshKeyDto } from "./dto/create-ssh-key.dto";
 import * as crypto from "crypto";
+import { Prisma } from "@prisma/client";
 
 @Injectable()
 export class SshKeyService {
@@ -92,14 +94,26 @@ export class SshKeyService {
   async create(userId: string, dto: CreateSshKeyDto) {
     const fingerprint = this.generateFingerprint(dto.publicKey);
 
-    return this.prisma.sshKey.create({
-      data: {
-        name: dto.name,
-        publicKey: dto.publicKey,
-        fingerprint,
-        userId,
-      },
-    });
+    try {
+      return await this.prisma.sshKey.create({
+        data: {
+          name: dto.name,
+          publicKey: dto.publicKey,
+          fingerprint,
+          userId,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException(
+          "This SSH key is already registered to your account",
+        );
+      }
+      throw error;
+    }
   }
 
   async generateAndCreate(userId: string, desiredName?: string) {
@@ -124,14 +138,27 @@ export class SshKeyService {
     const sshPublicKey = this.buildSshRsaPublicKeyFromJwk(jwk.n, jwk.e);
     const fingerprint = this.generateFingerprint(sshPublicKey);
 
-    const created = await this.prisma.sshKey.create({
-      data: {
-        name: safeName,
-        publicKey: sshPublicKey,
-        fingerprint,
-        userId,
-      },
-    });
+    let created;
+    try {
+      created = await this.prisma.sshKey.create({
+        data: {
+          name: safeName,
+          publicKey: sshPublicKey,
+          fingerprint,
+          userId,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new ConflictException(
+          "This SSH key is already registered to your account",
+        );
+      }
+      throw error;
+    }
 
     const timestamp = new Date().toISOString().slice(0, 10);
     const filename = `cloudvm-${safeName}-${timestamp}.pem`;

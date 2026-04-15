@@ -21,6 +21,7 @@ model UserQuota {
 model Payment {
   id        String   @id @default(uuid())
   userId    String
+  planId    String?
   amount    Float
   currency  String   @default("TND")
   status    String   @default("pending")

@@ -10,9 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 type PlanId = "student" | "pro" | "enterprise";
 type AnyPlanId = PlanId | "unlimited";
 
-const PLAN_CATALOG: Record<PlanId, {
-  name: string;
-  amountMilli: number;
+type ManagedPlanConfig = {
   amountDt: number;
   rank: number;
   vmHoursMonthly: number;
@@ -22,49 +20,83 @@ const PLAN_CATALOG: Record<PlanId, {
     maxRamMb: number;
     maxDiskGb: number;
   };
+};
+
+type PaymentPlanConfig = ManagedPlanConfig & {
+  name: string;
   description: string;
-}> = {
+  amountMilli: number;
+};
+
+const PLAN_LABELS: Record<PlanId, string> = {
+  student: "Student",
+  pro: "Pro",
+  enterprise: "Enterprise",
+};
+
+function loadManagedPlanCatalogFromEnv(): Record<PlanId, ManagedPlanConfig> {
+  const raw = process.env.PLAN_CATALOG_JSON;
+  if (!raw) {
+    throw new Error("Missing PLAN_CATALOG_JSON");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Invalid PLAN_CATALOG_JSON: must be valid JSON");
+  }
+
+  const record = parsed as Record<string, ManagedPlanConfig>;
+  const requiredPlans: PlanId[] = ["student", "pro", "enterprise"];
+
+  for (const planId of requiredPlans) {
+    const cfg = record?.[planId];
+    if (!cfg) {
+      throw new Error(`PLAN_CATALOG_JSON missing '${planId}' config`);
+    }
+
+    if (
+      !Number.isFinite(cfg.amountDt) || cfg.amountDt <= 0 ||
+      !Number.isFinite(cfg.rank) || cfg.rank < 1 ||
+      !Number.isFinite(cfg.vmHoursMonthly) || cfg.vmHoursMonthly <= 0 ||
+      !cfg.quota ||
+      !Number.isFinite(cfg.quota.maxVms) || cfg.quota.maxVms < 1 ||
+      !Number.isFinite(cfg.quota.maxCpu) || cfg.quota.maxCpu < 1 ||
+      !Number.isFinite(cfg.quota.maxRamMb) || cfg.quota.maxRamMb < 512 ||
+      !Number.isFinite(cfg.quota.maxDiskGb) || cfg.quota.maxDiskGb < 5
+    ) {
+      throw new Error(`Invalid PLAN_CATALOG_JSON values for '${planId}'`);
+    }
+  }
+
+  return {
+    student: record.student,
+    pro: record.pro,
+    enterprise: record.enterprise,
+  };
+}
+
+const MANAGED_PLAN_CATALOG = loadManagedPlanCatalogFromEnv();
+
+const PLAN_CATALOG: Record<PlanId, PaymentPlanConfig> = {
   student: {
-    name: "Student Plan",
-    amountMilli: 29000,
-    amountDt: 29,
-    rank: 1,
-    vmHoursMonthly: 60,
-    quota: {
-      maxVms: 2,
-      maxCpu: 2,
-      maxRamMb: 4096,
-      maxDiskGb: 40,
-    },
-    description: "Up to 2 VMs · 60 VM hours/month · 2 vCPU / 4 GB / 40 GB",
+    ...MANAGED_PLAN_CATALOG.student,
+    name: `${PLAN_LABELS.student} Plan`,
+    amountMilli: Math.round(MANAGED_PLAN_CATALOG.student.amountDt * 1000),
+    description: `Up to ${MANAGED_PLAN_CATALOG.student.quota.maxVms} VMs · ${MANAGED_PLAN_CATALOG.student.vmHoursMonthly} VM hours/month · ${MANAGED_PLAN_CATALOG.student.quota.maxCpu} vCPU / ${Math.round(MANAGED_PLAN_CATALOG.student.quota.maxRamMb / 1024)} GB / ${MANAGED_PLAN_CATALOG.student.quota.maxDiskGb} GB`,
   },
   pro: {
-    name: "Pro Plan",
-    amountMilli: 79000,
-    amountDt: 79,
-    rank: 2,
-    vmHoursMonthly: 220,
-    quota: {
-      maxVms: 6,
-      maxCpu: 8,
-      maxRamMb: 16384,
-      maxDiskGb: 120,
-    },
-    description: "Up to 6 VMs · 220 VM hours/month · 4 vCPU / 8 GB / 120 GB",
+    ...MANAGED_PLAN_CATALOG.pro,
+    name: `${PLAN_LABELS.pro} Plan`,
+    amountMilli: Math.round(MANAGED_PLAN_CATALOG.pro.amountDt * 1000),
+    description: `Up to ${MANAGED_PLAN_CATALOG.pro.quota.maxVms} VMs · ${MANAGED_PLAN_CATALOG.pro.vmHoursMonthly} VM hours/month · ${MANAGED_PLAN_CATALOG.pro.quota.maxCpu} vCPU / ${Math.round(MANAGED_PLAN_CATALOG.pro.quota.maxRamMb / 1024)} GB / ${MANAGED_PLAN_CATALOG.pro.quota.maxDiskGb} GB`,
   },
   enterprise: {
-    name: "Enterprise Plan",
-    amountMilli: 199000,
-    amountDt: 199,
-    rank: 3,
-    vmHoursMonthly: 900,
-    quota: {
-      maxVms: 20,
-      maxCpu: 32,
-      maxRamMb: 65536,
-      maxDiskGb: 400,
-    },
-    description: "Up to 20 VMs · 900 VM hours/month · 8 vCPU / 16 GB / 400 GB",
+    ...MANAGED_PLAN_CATALOG.enterprise,
+    name: `${PLAN_LABELS.enterprise} Plan`,
+    amountMilli: Math.round(MANAGED_PLAN_CATALOG.enterprise.amountDt * 1000),
+    description: `Up to ${MANAGED_PLAN_CATALOG.enterprise.quota.maxVms} VMs · ${MANAGED_PLAN_CATALOG.enterprise.vmHoursMonthly} VM hours/month · ${MANAGED_PLAN_CATALOG.enterprise.quota.maxCpu} vCPU / ${Math.round(MANAGED_PLAN_CATALOG.enterprise.quota.maxRamMb / 1024)} GB / ${MANAGED_PLAN_CATALOG.enterprise.quota.maxDiskGb} GB`,
   },
 };
 
@@ -112,9 +144,15 @@ export class PaymentService {
   }
 
   private extractPlanFromPayment(payment: {
+    planId?: string | null;
     method?: string | null;
     amount: number;
   }): AnyPlanId | null {
+    if (payment.planId === "student" || payment.planId === "pro" || payment.planId === "enterprise" || payment.planId === "unlimited") {
+      return payment.planId;
+    }
+
+    // Backward compatibility for legacy rows created before planId column.
     const method = (payment.method || "").toLowerCase();
 
     if (method.startsWith("admin:grant:")) {
@@ -248,6 +286,7 @@ export class PaymentService {
     await this.prisma.payment.create({
       data: {
         userId,
+        planId,
         amount: plan.amountDt,
         currency: "TND",
         status: "pending",
@@ -319,7 +358,7 @@ export class PaymentService {
           method: { startsWith: `stripe:${session.id}` },
           status: { notIn: ["paid", "admin_granted"] },
         },
-        select: { id: true, userId: true, method: true, amount: true },
+        select: { id: true, userId: true, planId: true, method: true, amount: true },
       });
 
       if (matched.length === 0) {
