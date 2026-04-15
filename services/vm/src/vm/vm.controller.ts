@@ -24,7 +24,7 @@ export class VmController {
     @Body() dto: CreateVmDto,
     @CurrentUser() user: { userId: string; role: string },
   ) {
-    return this.vmService.createVm(dto, user.userId);
+    return this.vmService.createVm(dto, user.userId, user.role);
   }
 
   @Get("templates")

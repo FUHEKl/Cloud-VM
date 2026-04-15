@@ -84,7 +84,7 @@ export class VmService {
     private readonly nats: NatsService,
   ) {}
 
-  async createVm(dto: CreateVmDto, userId: string) {
+  async createVm(dto: CreateVmDto, userId: string, role: string) {
     const vmKeyPair = this.generateVmSshKeyPair();
 
     this.logger.log(
@@ -108,10 +108,10 @@ export class VmService {
           },
         });
 
-        const maxVms = quota?.maxVms ?? 3;
-        const maxCpu = quota?.maxCpu ?? 4;
-        const maxRamMb = quota?.maxRamMb ?? 4096;
-        const maxDiskGb = quota?.maxDiskGb ?? 50;
+        const maxVms = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxVms ?? 3);
+        const maxCpu = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxCpu ?? 4);
+        const maxRamMb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxRamMb ?? 4096);
+        const maxDiskGb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxDiskGb ?? 50);
 
         if (activeVms >= maxVms) {
           throw new ForbiddenException(

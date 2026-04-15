@@ -66,6 +66,13 @@ const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private static readonly UNLIMITED_QUOTA = {
+    maxVms: SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxVms,
+    maxCpu: SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxCpu,
+    maxRamMb: SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxRamMb,
+    maxDiskGb: SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxDiskGb,
+  };
+
   private assertAdminRole(actorRole?: string) {
     // SECURITY: Defense in depth — service-level check is independent of gateway.
     if (actorRole !== "ADMIN") {
@@ -154,6 +161,30 @@ export class UserService {
     return null;
   }
 
+  private resolvePlanForUser(args: {
+    role: string;
+    quota?: {
+      maxVms: number;
+      maxCpu: number;
+      maxRamMb: number;
+      maxDiskGb: number;
+    } | null;
+    payments?: Array<{ method?: string | null; amount: number }>;
+  }): SubscriptionPlanId {
+    if (args.role === "ADMIN") {
+      return SubscriptionPlanId.UNLIMITED;
+    }
+
+    for (const payment of args.payments ?? []) {
+      const plan = this.extractPlanFromPayment(payment);
+      if (plan) {
+        return plan;
+      }
+    }
+
+    return this.resolvePlanFromQuota(args.quota);
+  }
+
   private getBillingCycleEnd(startedAt: Date): Date {
     return new Date(startedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
   }
@@ -221,10 +252,11 @@ export class UserService {
     const latestSubscriptionPayment = user.payments[0] ?? null;
     const now = new Date();
 
-    const planId = user.role === "ADMIN"
-      ? SubscriptionPlanId.UNLIMITED
-      : this.extractPlanFromPayment(latestSubscriptionPayment ?? { amount: 29, method: null })
-        ?? this.resolvePlanFromQuota(user.quota);
+    const planId = this.resolvePlanForUser({
+      role: user.role,
+      quota: user.quota,
+      payments: user.payments,
+    });
 
     const cycleStartedAt = latestSubscriptionPayment?.createdAt ?? new Date(now.getFullYear(), now.getMonth(), 1);
     const cycleEndsAt = this.getBillingCycleEnd(cycleStartedAt);
@@ -243,9 +275,13 @@ export class UserService {
     const diskGbUsed = user.virtualMachines.reduce((acc, vm) => acc + vm.diskGb, 0);
 
     const safeUser = this.excludePassword(user);
+    const effectiveQuota = user.role === "ADMIN"
+      ? UserService.UNLIMITED_QUOTA
+      : user.quota;
 
     return {
       ...safeUser,
+      quota: effectiveQuota,
       usage: {
         vmCount: user.virtualMachines.length,
         cpuUsed,
@@ -476,10 +512,11 @@ export class UserService {
 
     return {
       user: this.excludePassword(user),
-      subscription:
-        user.role === "ADMIN"
-          ? SubscriptionPlanId.UNLIMITED
-          : this.resolvePlanFromQuota(user.quota),
+      subscription: this.resolvePlanForUser({
+        role: user.role,
+        quota: user.quota,
+        payments: user.payments,
+      }),
       totalSpent,
       paidPaymentsCount: paidPayments.length,
       pendingPaymentsCount: user.payments.filter((p) => p.status === "pending").length,
@@ -527,7 +564,18 @@ export class UserService {
       }),
       this.prisma.user.findMany({
         where: userWhere,
-        include: { quota: true },
+        include: {
+          quota: true,
+          payments: {
+            where: {
+              status: {
+                in: ["paid", "admin_granted"],
+              },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+          },
+        },
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
@@ -540,10 +588,11 @@ export class UserService {
 
     const usersWithSubscription = users.map((user) => ({
       ...this.excludePassword(user),
-      subscription:
-        user.role === "ADMIN"
-          ? SubscriptionPlanId.UNLIMITED
-          : this.resolvePlanFromQuota(user.quota),
+      subscription: this.resolvePlanForUser({
+        role: user.role,
+        quota: user.quota,
+        payments: user.payments,
+      }),
     }));
 
     return {
