@@ -23,6 +23,7 @@ nginx/ssl/*.crt
 # Keep only OpenNebula scripts in public repo
 scripts/*
 !scripts/admin_mfa_smoke_test.py
+!scripts/reconcile_paid_subscriptions.py
 !scripts/postgres/
 !scripts/postgres/**
 !scripts/opennebula/

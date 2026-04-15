@@ -461,6 +461,32 @@ export class UserService {
     };
   }
 
+  async activateSubscriptionPlanFromInternal(
+    userId: string,
+    planId: "student" | "pro" | "enterprise" | "unlimited",
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    const finalPlan = user.role === "ADMIN"
+      ? SubscriptionPlanId.UNLIMITED
+      : (planId as SubscriptionPlanId);
+
+    const quota = await this.upsertQuota(userId, finalPlan);
+
+    return {
+      userId,
+      planId: finalPlan,
+      quota,
+    };
+  }
+
   async updateProfile(userId: string, dto: UpdateProfileDto) {
     if (dto.email) {
       const existing = await this.prisma.user.findUnique({
