@@ -49,6 +49,7 @@ export default function BillingPage() {
   const params = useSearchParams();
   const preferredPlan = params.get("plan") as PlanId | null;
   const status = params.get("status");
+  const successSessionId = params.get("session_id");
   const isAdmin = user?.role === "ADMIN";
 
   const [loadingPlan, setLoadingPlan] = useState<PlanId | null>(null);
@@ -90,6 +91,21 @@ export default function BillingPage() {
     void loadProfileDetails();
   }, [loadPayments, loadProfileDetails, status]);
 
+  useEffect(() => {
+    if (status !== "success" || !successSessionId || isAdmin) return;
+
+    const confirm = async () => {
+      try {
+        await api.post("/payments/confirm-session", { sessionId: successSessionId });
+        await Promise.all([loadPayments(), loadProfileDetails()]);
+      } catch (err: unknown) {
+        setError(getErrorMessage(err, "Payment succeeded but plan activation is still processing"));
+      }
+    };
+
+    void confirm();
+  }, [status, successSessionId, isAdmin, loadPayments, loadProfileDetails]);
+
   const planRank: Record<SubscriptionPlanId, number> = {
     student: 1,
     pro: 2,
@@ -107,8 +123,7 @@ export default function BillingPage() {
     const currentRank = planRank[activePlan];
 
     if (requestedRank > currentRank) return true;
-    if (requestedRank === currentRank) return canRenewSamePlan;
-    return false;
+    return canRenewSamePlan;
   };
 
   const planBlockReason = (planId: PlanId) => {
@@ -116,12 +131,8 @@ export default function BillingPage() {
     const requestedRank = planRank[planId];
     const currentRank = planRank[activePlan];
 
-    if (requestedRank < currentRank) {
-      return "Downgrades are locked during an active billing cycle.";
-    }
-
-    if (requestedRank === currentRank && !canRenewSamePlan) {
-      return "Same plan renewal is locked until cycle end or VM hours are consumed.";
+    if (requestedRank <= currentRank && !canRenewSamePlan) {
+      return "Same or lower plan is locked until cycle end or until you reach 90% VM-hours usage.";
     }
 
     return "";
@@ -206,6 +217,12 @@ export default function BillingPage() {
           {" "}plan · VM hours used: {profileDetails.subscription.vmHoursUsed.toFixed(2)} / {profileDetails.subscription.vmHoursIncluded}
           {" "}· Remaining: {profileDetails.subscription.vmHoursRemaining.toFixed(2)}
           {" "}· Cycle ends: {new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}
+        </div>
+      )}
+
+      {!profileDetails?.subscription && !isAdmin && (
+        <div className="px-4 py-3 rounded-lg bg-cyber-orange/10 border border-cyber-orange/30 text-cyber-orange text-sm">
+          No active subscription yet. Purchase a plan to activate VM quota.
         </div>
       )}
 

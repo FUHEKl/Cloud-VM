@@ -28,6 +28,15 @@ type PaymentPlanConfig = ManagedPlanConfig & {
   amountMilli: number;
 };
 
+type SubscriptionAccessSnapshot = {
+  activePlanId: AnyPlanId | null;
+  canPurchaseSameOrLower: boolean;
+  usageRatio: number;
+  cycleEndsAt?: string;
+  vmHoursUsed?: number;
+  vmHoursIncluded?: number;
+};
+
 const PLAN_LABELS: Record<PlanId, string> = {
   student: "Student",
   pro: "Pro",
@@ -132,6 +141,40 @@ export class PaymentService {
     return firstCors || "http://localhost:3000";
   }
 
+  private getUserServiceUrl(): string {
+    const url = (process.env.USER_SERVICE_URL || "http://user:3003").trim();
+    if (!url) {
+      throw new InternalServerErrorException("Missing USER_SERVICE_URL configuration");
+    }
+    return url;
+  }
+
+  private getInterServiceSyncToken(): string {
+    const token = (process.env.INTER_SERVICE_SYNC_TOKEN || "").trim();
+    if (!token) {
+      throw new InternalServerErrorException("Missing INTER_SERVICE_SYNC_TOKEN configuration");
+    }
+    return token;
+  }
+
+  private async getSubscriptionAccessSnapshot(userId: string): Promise<SubscriptionAccessSnapshot> {
+    const url = `${this.getUserServiceUrl()}/users/internal/subscription-access/${encodeURIComponent(userId)}`;
+    const syncToken = this.getInterServiceSyncToken();
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "x-sync-token": syncToken,
+      },
+    });
+
+    if (!response.ok) {
+      throw new InternalServerErrorException("Failed to verify subscription access state");
+    }
+
+    return (await response.json()) as SubscriptionAccessSnapshot;
+  }
+
   private getUsdPerTndRate(): number {
     const raw = (process.env.STRIPE_TND_TO_USD_RATE || "0.32").trim();
     const rate = Number(raw);
@@ -196,43 +239,71 @@ export class PaymentService {
   }
 
   private async enforcePlanPurchaseRules(userId: string, requestedPlanId: PlanId) {
-    const latestSubscription = await this.prisma.payment.findFirst({
-      where: {
-        userId,
-        status: {
-          in: ["paid", "admin_granted"],
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const snapshot = await this.getSubscriptionAccessSnapshot(userId);
 
-    if (!latestSubscription) return;
-
-    const currentPlanId = this.extractPlanFromPayment(latestSubscription);
-    if (!currentPlanId || currentPlanId === "unlimited") return;
-
-    const cycleStart = latestSubscription.createdAt;
-    const now = new Date();
-    const cycleEnd = this.getBillingCycleEnd(cycleStart);
-
-    if (now >= cycleEnd) return;
+    const currentPlanId = snapshot.activePlanId;
+    if (!currentPlanId) return;
+    if (currentPlanId === "unlimited") {
+      throw new ForbiddenException("Admin/unlimited accounts cannot purchase paid plans");
+    }
 
     const currentRank = this.getPlanRank(currentPlanId);
     const requestedRank = this.getPlanRank(requestedPlanId);
 
     if (requestedRank > currentRank) return;
 
+    if (snapshot.canPurchaseSameOrLower) return;
+
+    const usagePct = Math.round((snapshot.usageRatio || 0) * 100);
+    const cycleEndText = snapshot.cycleEndsAt
+      ? new Date(snapshot.cycleEndsAt).toLocaleDateString("en-US")
+      : "the current cycle end";
+
     if (requestedPlanId === currentPlanId) {
       throw new BadRequestException(
-        `You already have the ${currentPlanId} plan for the current billing cycle. You can renew it when the cycle ends.`,
+        `You already have the ${currentPlanId} plan. Renewal is locked until you reach 90% usage or until ${cycleEndText}. Current usage: ${usagePct}%.`,
       );
     }
 
-    if (requestedPlanId !== currentPlanId) {
-      throw new BadRequestException(
-        `You currently have an active ${currentPlanId} plan. Only upgrades are allowed before cycle end.`,
-      );
+    throw new BadRequestException(
+      `You currently have an active ${currentPlanId} plan. Same or lower plans unlock at 90% usage (or cycle end). Current usage: ${usagePct}%.`,
+    );
+  }
+
+  private async markStripeSessionAsPaid(sessionId: string, expectedUserId?: string) {
+    const matched = await this.prisma.payment.findMany({
+      where: {
+        method: { startsWith: `stripe:${sessionId}` },
+      },
+      select: { id: true, userId: true, planId: true, method: true, amount: true, status: true },
+    });
+
+    if (matched.length === 0) {
+      return { updated: 0 as number, appliedPlanIds: [] as AnyPlanId[] };
     }
+
+    if (expectedUserId && matched.some((payment) => payment.userId !== expectedUserId)) {
+      throw new ForbiddenException("Checkout session does not belong to this account");
+    }
+
+    await this.prisma.payment.updateMany({
+      where: {
+        id: { in: matched.map((payment) => payment.id) },
+        status: { notIn: ["paid", "admin_granted"] },
+      },
+      data: { status: "paid" },
+    });
+
+    const appliedPlanIds: AnyPlanId[] = [];
+    for (const payment of matched) {
+      const planId = this.extractPlanFromPayment(payment);
+      if (planId) {
+        appliedPlanIds.push(planId);
+      }
+      await this.syncQuotaForPlan(payment.userId, planId);
+    }
+
+    return { updated: matched.length, appliedPlanIds };
   }
 
   async createCheckoutSession(userId: string, role: string, planId: PlanId) {
@@ -312,6 +383,39 @@ export class PaymentService {
     });
   }
 
+  async confirmCheckoutSession(userId: string, sessionId: string) {
+    if (!this.stripe) {
+      throw new InternalServerErrorException("Stripe is not configured on this environment");
+    }
+
+    if (!sessionId?.trim()) {
+      throw new BadRequestException("Missing Stripe session id");
+    }
+
+    const session = await this.stripe.checkout.sessions.retrieve(sessionId);
+    if (!session) {
+      throw new BadRequestException("Stripe session not found");
+    }
+
+    if (session.metadata?.userId && session.metadata.userId !== userId) {
+      throw new ForbiddenException("Checkout session does not belong to this account");
+    }
+
+    if (session.payment_status !== "paid") {
+      throw new BadRequestException("Stripe session is not paid yet");
+    }
+
+    const result = await this.markStripeSessionAsPaid(sessionId, userId);
+
+    return {
+      ok: true,
+      sessionId,
+      status: "paid",
+      updatedPayments: result.updated,
+      appliedPlanIds: result.appliedPlanIds,
+    };
+  }
+
   async handleWebhook(rawBody: Buffer, stripeSignature?: string) {
     if (!this.stripe) {
       throw new InternalServerErrorException("Stripe is not configured on this environment");
@@ -352,31 +456,7 @@ export class PaymentService {
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
-
-      const matched = await this.prisma.payment.findMany({
-        where: {
-          method: { startsWith: `stripe:${session.id}` },
-          status: { notIn: ["paid", "admin_granted"] },
-        },
-        select: { id: true, userId: true, planId: true, method: true, amount: true },
-      });
-
-      if (matched.length === 0) {
-        return;
-      }
-
-      await this.prisma.payment.updateMany({
-        where: {
-          id: { in: matched.map((payment) => payment.id) },
-          status: { notIn: ["paid", "admin_granted"] },
-        },
-        data: { status: "paid" },
-      });
-
-      for (const payment of matched) {
-        const planId = this.extractPlanFromPayment(payment);
-        await this.syncQuotaForPlan(payment.userId, planId);
-      }
+      await this.markStripeSessionAsPaid(session.id);
     }
 
     if (event.type === "checkout.session.expired") {

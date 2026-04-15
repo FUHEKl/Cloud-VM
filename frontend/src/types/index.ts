@@ -44,7 +44,7 @@ export interface SubscriptionSnapshot {
 export interface UserProfileDetails extends User {
   quota?: UserQuota;
   usage?: UsageSnapshot;
-  subscription?: SubscriptionSnapshot;
+  subscription?: SubscriptionSnapshot | null;
 }
 
 export interface AuthTokens {

@@ -30,6 +30,8 @@ type ManagedPlanConfig = {
   rank: number;
 };
 
+type ActivePlanId = SubscriptionPlanId | null;
+
 function loadManagedSubscriptionCatalogFromEnv(): Record<ManagedPlanId, ManagedPlanConfig> {
   const raw = process.env.PLAN_CATALOG_JSON;
   if (!raw) {
@@ -141,6 +143,8 @@ const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
 export class UserService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private static readonly SAME_OR_LOWER_UNLOCK_USAGE_RATIO = 0.9;
+
   async syncFromAuth(payload: {
     id: string;
     email: string;
@@ -192,11 +196,11 @@ export class UserService {
       },
     });
 
-    const targetPlan = role === "ADMIN"
-      ? SubscriptionPlanId.UNLIMITED
-      : SubscriptionPlanId.STUDENT;
-
-    await this.upsertQuota(user.id, targetPlan);
+    // Keep user quotas immutable on auth sync to avoid resetting paid plans.
+    // New USER accounts start with no active paid subscription.
+    if (role === "ADMIN") {
+      await this.upsertQuota(user.id, SubscriptionPlanId.UNLIMITED);
+    }
 
     return user;
   }
@@ -226,8 +230,8 @@ export class UserService {
     maxCpu: number;
     maxRamMb: number;
     maxDiskGb: number;
-  } | null): SubscriptionPlanId {
-    if (!quota) return SubscriptionPlanId.STUDENT;
+  } | null): ActivePlanId {
+    if (!quota) return null;
 
     if (
       quota.maxVms >= SUBSCRIPTION_QUOTAS[SubscriptionPlanId.UNLIMITED].maxVms ||
@@ -282,7 +286,7 @@ export class UserService {
       maxRamMb: number;
       maxDiskGb: number;
     } | null;
-  }): SubscriptionPlanId {
+  }): ActivePlanId {
     if (args.role === "ADMIN") {
       return SubscriptionPlanId.UNLIMITED;
     }
@@ -347,27 +351,58 @@ export class UserService {
       quota: user.quota,
     });
 
-    const cycleStartedAt = new Date(now.getFullYear(), now.getMonth(), 1);
-    const cycleEndsAt = this.getBillingCycleEnd(cycleStartedAt);
-    const vmHoursIncluded = SUBSCRIPTION_QUOTAS[planId].vmHoursMonthly;
+    let subscription: {
+      planId: SubscriptionPlanId;
+      cycleStartedAt: Date;
+      cycleEndsAt: Date;
+      vmHoursIncluded: number;
+      vmHoursUsed: number;
+      vmHoursRemaining: number;
+      canRenewSamePlan: boolean;
+    } | null = null;
 
-    const vmsForHours = await this.prisma.virtualMachine.findMany({
-      where: {
-        userId,
-        createdAt: { gte: cycleStartedAt },
-        status: { not: "DELETED" as any },
-      },
-      select: { status: true, createdAt: true, stoppedAt: true },
-    });
+    if (planId) {
+      const cycleStartedAt = new Date(now.getFullYear(), now.getMonth(), 1);
+      const cycleEndsAt = this.getBillingCycleEnd(cycleStartedAt);
+      const vmHoursIncluded = SUBSCRIPTION_QUOTAS[planId].vmHoursMonthly;
 
-    const vmHoursUsed = this.estimateVmHoursUsed(
-      vmsForHours,
-      cycleStartedAt,
-      now < cycleEndsAt ? now : cycleEndsAt,
-    );
-    const vmHoursRemaining = planId === SubscriptionPlanId.UNLIMITED
-      ? Number.MAX_SAFE_INTEGER
-      : Math.max(0, Number((vmHoursIncluded - vmHoursUsed).toFixed(2)));
+      const vmsForHours = await this.prisma.virtualMachine.findMany({
+        where: {
+          userId,
+          createdAt: { gte: cycleStartedAt },
+          status: { not: "DELETED" as any },
+        },
+        select: { status: true, createdAt: true, stoppedAt: true },
+      });
+
+      const vmHoursUsed = this.estimateVmHoursUsed(
+        vmsForHours,
+        cycleStartedAt,
+        now < cycleEndsAt ? now : cycleEndsAt,
+      );
+
+      const vmHoursRemaining = planId === SubscriptionPlanId.UNLIMITED
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(0, Number((vmHoursIncluded - vmHoursUsed).toFixed(2)));
+
+      const sameOrLowerUnlockedByUsage =
+        planId !== SubscriptionPlanId.UNLIMITED &&
+        vmHoursIncluded > 0 &&
+        vmHoursUsed >= vmHoursIncluded * UserService.SAME_OR_LOWER_UNLOCK_USAGE_RATIO;
+
+      subscription = {
+        planId,
+        cycleStartedAt,
+        cycleEndsAt,
+        vmHoursIncluded,
+        vmHoursUsed,
+        vmHoursRemaining,
+        canRenewSamePlan:
+          planId === SubscriptionPlanId.UNLIMITED
+            ? false
+            : now >= cycleEndsAt || sameOrLowerUnlockedByUsage,
+      };
+    }
 
     const cpuUsed = resourceUsage._sum.cpu ?? 0;
     const ramMbUsed = resourceUsage._sum.ramMb ?? 0;
@@ -388,18 +423,41 @@ export class UserService {
         ramMbUsed,
         diskGbUsed,
       },
-      subscription: {
-        planId,
-        cycleStartedAt,
-        cycleEndsAt,
-        vmHoursIncluded,
-        vmHoursUsed,
-        vmHoursRemaining,
-        canRenewSamePlan:
-          planId === SubscriptionPlanId.UNLIMITED
-            ? false
-            : now >= cycleEndsAt || vmHoursUsed >= vmHoursIncluded,
-      },
+      subscription,
+    };
+  }
+
+  async getInternalSubscriptionAccess(userId: string) {
+    const profile = await this.getProfile(userId);
+    const subscription = profile.subscription;
+
+    if (!subscription) {
+      return {
+        activePlanId: null,
+        canPurchaseSameOrLower: true,
+        usageRatio: 0,
+      };
+    }
+
+    if (subscription.planId === SubscriptionPlanId.UNLIMITED) {
+      return {
+        activePlanId: SubscriptionPlanId.UNLIMITED,
+        canPurchaseSameOrLower: false,
+        usageRatio: 1,
+      };
+    }
+
+    const usageRatio = subscription.vmHoursIncluded > 0
+      ? Number((subscription.vmHoursUsed / subscription.vmHoursIncluded).toFixed(4))
+      : 0;
+
+    return {
+      activePlanId: subscription.planId,
+      canPurchaseSameOrLower: subscription.canRenewSamePlan,
+      usageRatio,
+      cycleEndsAt: subscription.cycleEndsAt,
+      vmHoursUsed: subscription.vmHoursUsed,
+      vmHoursIncluded: subscription.vmHoursIncluded,
     };
   }
 

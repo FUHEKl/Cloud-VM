@@ -103,6 +103,8 @@ services:
     environment:
       - DATABASE_URL=${PAYMENT_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
       - PLAN_CATALOG_JSON=${PLAN_CATALOG_JSON}
+      - USER_SERVICE_URL=http://user:3003
+      - INTER_SERVICE_SYNC_TOKEN=${INTER_SERVICE_SYNC_TOKEN}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - CORS_ORIGIN=${CORS_ORIGIN}

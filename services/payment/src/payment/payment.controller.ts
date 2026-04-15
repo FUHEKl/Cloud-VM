@@ -27,6 +27,15 @@ export class PaymentController {
     return this.paymentService.createCheckoutSession(user.userId, user.role, dto.planId);
   }
 
+  @Post("confirm-session")
+  @UseGuards(JwtAuthGuard)
+  async confirmCheckoutSession(
+    @CurrentUser() user: { userId: string },
+    @Body() dto: { sessionId?: string },
+  ) {
+    return this.paymentService.confirmCheckoutSession(user.userId, dto?.sessionId || "");
+  }
+
   @Get("me")
   @UseGuards(JwtAuthGuard)
   async listMyPayments(@CurrentUser() user: { userId: string }) {
