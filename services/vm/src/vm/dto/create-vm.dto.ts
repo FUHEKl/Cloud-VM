@@ -40,4 +40,11 @@ export class CreateVmDto {
   @IsOptional()
   @IsString()
   planId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(32)
+  @MaxLength(4096)
+  @Matches(/^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256)\s+\S+/)
+  sshPublicKey?: string;
 }

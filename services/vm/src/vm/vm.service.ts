@@ -143,12 +143,25 @@ export class VmService {
       remoteQuota = await this.fetchInternalQuotaSnapshot(userId);
     }
 
-    const vmKeyPair = this.generateVmSshKeyPair();
-    const encryptedPrivateKey = encryptVmPrivateKey(vmKeyPair.privateKeyPem);
+    const providedPublicKey = dto.sshPublicKey?.trim();
+    let sshPublicKeyForVm = providedPublicKey || "";
+    let generatedSshPrivateKey: string | null = null;
+    let encryptedPrivateKey: string | null = null;
 
-    this.logger.log(
-      `Generated VM SSH key pair (public prefix=${vmKeyPair.publicKeySsh.split(" ")[0]}, length=${vmKeyPair.publicKeySsh.length})`,
-    );
+    if (!providedPublicKey) {
+      const vmKeyPair = this.generateVmSshKeyPair();
+      sshPublicKeyForVm = vmKeyPair.publicKeySsh;
+      generatedSshPrivateKey = vmKeyPair.privateKeyPem;
+      encryptedPrivateKey = encryptVmPrivateKey(vmKeyPair.privateKeyPem);
+
+      this.logger.log(
+        `Generated VM SSH key pair (public prefix=${vmKeyPair.publicKeySsh.split(" ")[0]}, length=${vmKeyPair.publicKeySsh.length})`,
+      );
+    } else {
+      this.logger.log(
+        `Using caller-provided SSH public key for VM provisioning (length=${providedPublicKey.length})`,
+      );
+    }
 
     let vm;
     try {
@@ -262,7 +275,7 @@ export class VmService {
 
     // Publish to NATS for the worker to create the VM
     this.logger.log(
-      `Publishing vm.create for ${vm.id} with sshPublicKey length=${vmKeyPair.publicKeySsh.length}`,
+      `Publishing vm.create for ${vm.id} with sshPublicKey length=${sshPublicKeyForVm.length}`,
     );
     await this.nats.publish("vm.create", {
       vmId: vm.id,
@@ -272,7 +285,7 @@ export class VmService {
       diskGb: vm.diskGb,
       osTemplate: vm.osTemplate,
       userId,
-      sshPublicKey: vmKeyPair.publicKeySsh,
+      sshPublicKey: sshPublicKeyForVm,
     });
 
     this.logSecurityEvent("vm.action.queued", {
@@ -285,7 +298,7 @@ export class VmService {
     this.logger.log(`VM ${vm.id} created and queued for provisioning`);
     return {
       ...vm,
-      generatedSshPrivateKey: vmKeyPair.privateKeyPem,
+      generatedSshPrivateKey,
     };
   }
 

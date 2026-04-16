@@ -4,139 +4,15 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
-import { saveGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
-import type { Plan } from "@/types";
-
-// ──────────────────────────────────────────────────────────────────────────────
-// SSH Key Modal — shown immediately after VM creation so the user can copy
-// the private key before being redirected.
-// The key is also persisted to localStorage for the in-browser terminal,
-// but that storage is ephemeral (cleared on browser data reset) so the user
-// MUST save a copy of the key themselves.
-// ──────────────────────────────────────────────────────────────────────────────
-function SshKeyModal({
-  vmName,
-  privateKey,
-  onContinue,
-}: {
-  vmName: string;
-  privateKey: string;
-  onContinue: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(privateKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      const el = document.getElementById(
-        "ssh-key-textarea"
-      ) as HTMLTextAreaElement | null;
-      el?.select();
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="cyber-card w-full max-w-2xl">
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-2xl">🔑</span>
-          <div>
-            <h2 className="text-xl font-bold text-cyber-text">
-              Save Your SSH Private Key
-            </h2>
-            <p className="text-sm text-cyber-text-dim">
-              VM{" "}
-              <span className="text-cyber-green font-mono">{vmName}</span> is
-              being provisioned
-            </p>
-          </div>
-        </div>
-
-        {/* Warning */}
-        <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-orange/10 border border-cyber-orange/30 text-cyber-orange text-sm">
-          <strong>⚠️ This is the only time you will see this key.</strong> Save
-          it now — it cannot be retrieved later. You need it to SSH into your VM
-          from outside the browser terminal.
-        </div>
-
-        {/* Key textarea */}
-        <textarea
-          id="ssh-key-textarea"
-          readOnly
-          value={privateKey}
-          rows={10}
-          className="w-full rounded-lg border border-cyber-border bg-[#060b18] text-cyber-green font-mono text-xs p-3 resize-none focus:outline-none focus:border-cyber-cyan/50 mb-3"
-        />
-
-        {/* Usage hint */}
-        <p className="text-xs text-cyber-text-dim mb-4">
-          Save as{" "}
-          <code className="text-cyber-cyan">vm-{vmName}.pem</code> then
-          connect:{" "}
-          <code className="text-cyber-cyan">
-            ssh -i vm-{vmName}.pem cloudvm@&lt;VM_IP&gt;
-          </code>
-        </p>
-
-        {/* Actions */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button
-            onClick={handleCopy}
-            className="flex-1 cyber-btn-secondary flex items-center justify-center gap-2"
-          >
-            {copied ? (
-              <>
-                <svg
-                  className="w-4 h-4 text-cyber-green"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-                Copied!
-              </>
-            ) : (
-              <>
-                <svg
-                  className="w-4 h-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
-                  <rect x="9" y="9" width="13" height="13" rx="2" />
-                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                </svg>
-                Copy to Clipboard
-              </>
-            )}
-          </button>
-          <button
-            onClick={onContinue}
-            className="flex-1 cyber-btn-primary flex items-center justify-center gap-2"
-          >
-            I&apos;ve saved my key — Continue
-            <svg
-              className="w-4 h-4"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M5 12h14M12 5l7 7-7 7" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+import {
+  downloadPrivateKeyAsPem,
+  getUserGeneratedSshPrivateKey,
+  hasDownloadedGeneratedSshPrivateKey,
+  markGeneratedSshPrivateKeyDownloaded,
+  saveGeneratedVmSshPrivateKey,
+  saveUserGeneratedSshPrivateKey,
+} from "@/lib/vmSshKeyStore";
+import type { GeneratedSshKeyResponse, Plan, SshKey } from "@/types";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Create VM page
@@ -144,6 +20,12 @@ function SshKeyModal({
 export default function CreateVmPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [sshKeys, setSshKeys] = useState<SshKey[]>([]);
+  const [sshKeysLoading, setSshKeysLoading] = useState(true);
+  const [sshMode, setSshMode] = useState<"existing" | "generate-new">(
+    "generate-new",
+  );
+  const [selectedSshKeyId, setSelectedSshKeyId] = useState("");
   const [osTemplates, setOsTemplates] = useState<
     { id: number; name: string }[]
   >([]);
@@ -159,14 +41,28 @@ export default function CreateVmPage() {
   const [useCustom, setUseCustom] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  // SSH key modal is shown after successful VM creation so the user can
-  // copy the private key BEFORE being redirected to the VM list.
-  const [sshKeyModal, setSshKeyModal] = useState<{
-    vmId: string;
-    vmName: string;
-    privateKey: string;
-  } | null>(null);
+  const loadSshKeys = async () => {
+    try {
+      const { data } = await api.get("/ssh-keys");
+      const list = Array.isArray(data) ? data : [];
+      setSshKeys(list);
+      if (list.length > 0) {
+        setSshMode("existing");
+        setSelectedSshKeyId((prev) => prev || list[0].id);
+      } else {
+        setSshMode("generate-new");
+        setSelectedSshKeyId("");
+      }
+    } catch {
+      setSshKeys([]);
+      setSshMode("generate-new");
+      setSelectedSshKeyId("");
+    } finally {
+      setSshKeysLoading(false);
+    }
+  };
 
   useEffect(() => {
     api
@@ -193,13 +89,54 @@ export default function CreateVmPage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    loadSshKeys();
+  }, []);
+
   const selectedPlan = plans.find((p) => p.id === form.planId);
+  const selectedSshKey = sshKeys.find((key) => key.id === selectedSshKeyId);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setLoading(true);
     try {
+      let selectedPublicKey = "";
+      let selectedPrivateKey: string | null = null;
+
+      if (sshMode === "existing" && selectedSshKey) {
+        selectedPublicKey = selectedSshKey.publicKey;
+        selectedPrivateKey = getUserGeneratedSshPrivateKey(selectedSshKey.id);
+      } else {
+        const generatedName = form.name?.trim()
+          ? `${form.name}-key`
+          : `vm-key-${new Date().toISOString().slice(0, 10)}`;
+
+        const { data } = await api.post<GeneratedSshKeyResponse>(
+          "/ssh-keys/generate",
+          { name: generatedName },
+        );
+
+        if (!data?.key?.id || !data?.key?.publicKey || !data?.privateKey) {
+          throw new Error("Generated SSH key response is incomplete");
+        }
+
+        selectedPublicKey = data.key.publicKey;
+        selectedPrivateKey = data.privateKey;
+
+        saveUserGeneratedSshPrivateKey(data.key.id, data.privateKey, data.filename);
+
+        if (!hasDownloadedGeneratedSshPrivateKey(data.key.id) && data.filename) {
+          downloadPrivateKeyAsPem(data.filename, data.privateKey);
+          markGeneratedSshPrivateKeyDownloaded(data.key.id);
+        }
+      }
+
+      if (!selectedPublicKey) {
+        throw new Error("Please select or generate an SSH key");
+      }
+
       const body = useCustom
         ? {
             name: form.name,
@@ -207,6 +144,7 @@ export default function CreateVmPage() {
             cpu: form.cpu,
             ramMb: form.ramMb,
             diskGb: form.diskGb,
+            sshPublicKey: selectedPublicKey,
           }
         : {
             name: form.name,
@@ -215,26 +153,17 @@ export default function CreateVmPage() {
             cpu: selectedPlan?.cpu || 1,
             ramMb: selectedPlan?.ramMb || 1024,
             diskGb: selectedPlan?.diskGb || 10,
+            sshPublicKey: selectedPublicKey,
           };
 
       const { data: createdVm } = await api.post("/vms", body);
 
-      if (createdVm?.id && createdVm?.generatedSshPrivateKey) {
-        // Persist key to localStorage so the in-browser terminal can use it
-        saveGeneratedVmSshPrivateKey(
-          createdVm.id,
-          createdVm.generatedSshPrivateKey
-        );
-        // Show the SSH key modal — actual redirect happens in handleModalContinue
-        setSshKeyModal({
-          vmId: createdVm.id,
-          vmName: createdVm.name,
-          privateKey: createdVm.generatedSshPrivateKey,
-        });
-      } else {
-        // No key returned (should not happen) — redirect immediately
-        router.push("/dashboard/vms");
+      if (createdVm?.id && selectedPrivateKey) {
+        saveGeneratedVmSshPrivateKey(createdVm.id, selectedPrivateKey);
       }
+
+      setSuccess("VM created successfully. Redirecting...");
+      router.push("/dashboard/vms");
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Failed to create VM"));
     } finally {
@@ -242,22 +171,8 @@ export default function CreateVmPage() {
     }
   };
 
-  const handleModalContinue = () => {
-    setSshKeyModal(null);
-    router.push("/dashboard/vms");
-  };
-
   return (
-    <>
-      {sshKeyModal && (
-        <SshKeyModal
-          vmName={sshKeyModal.vmName}
-          privateKey={sshKeyModal.privateKey}
-          onContinue={handleModalContinue}
-        />
-      )}
-
-      <div className="max-w-3xl">
+    <div className="max-w-3xl">
         <h1 className="text-2xl font-bold text-cyber-text mb-2">
           Create Virtual Machine
         </h1>
@@ -268,6 +183,12 @@ export default function CreateVmPage() {
         {error && (
           <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm">
             {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-green/10 border border-cyber-green/30 text-cyber-green text-sm">
+            {success}
           </div>
         )}
 
@@ -459,6 +380,74 @@ export default function CreateVmPage() {
             )}
           </div>
 
+          {/* SSH Key Access */}
+          <div className="cyber-card">
+            <h3 className="text-lg font-semibold text-cyber-text mb-4">
+              SSH Access Key
+            </h3>
+
+            {sshKeysLoading ? (
+              <p className="text-sm text-cyber-text-dim">Loading SSH keys...</p>
+            ) : (
+              <div className="space-y-4">
+                {sshKeys.length > 0 && (
+                  <label className="flex items-center gap-2 text-sm text-cyber-text cursor-pointer">
+                    <input
+                      type="radio"
+                      name="ssh-mode"
+                      checked={sshMode === "existing"}
+                      onChange={() => setSshMode("existing")}
+                      className="accent-cyber-green"
+                    />
+                    Use an existing SSH key
+                  </label>
+                )}
+
+                {sshMode === "existing" && sshKeys.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
+                      Select key
+                    </label>
+                    <select
+                      className="cyber-input"
+                      value={selectedSshKeyId}
+                      onChange={(e) => setSelectedSshKeyId(e.target.value)}
+                      required
+                    >
+                      {sshKeys.map((key) => (
+                        <option key={key.id} value={key.id}>
+                          {key.name} ({key.fingerprint})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-cyber-text-dim mt-2">
+                      This key will be used for VM access. No new private key download
+                      is triggered for existing keys.
+                    </p>
+                  </div>
+                )}
+
+                <label className="flex items-center gap-2 text-sm text-cyber-text cursor-pointer">
+                  <input
+                    type="radio"
+                    name="ssh-mode"
+                    checked={sshMode === "generate-new"}
+                    onChange={() => setSshMode("generate-new")}
+                    className="accent-cyber-green"
+                  />
+                  Generate a new SSH key now (recommended if none exists)
+                </label>
+
+                {sshMode === "generate-new" && (
+                  <p className="text-xs text-cyber-text-dim">
+                    A new key will be generated automatically before VM creation,
+                    added to your SSH Keys page, and its private key will download once.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Submit */}
           <div className="flex gap-3">
             <button
@@ -478,6 +467,5 @@ export default function CreateVmPage() {
           </div>
         </form>
       </div>
-    </>
   );
 }

@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
+import {
+  downloadPrivateKeyAsPem,
+  hasDownloadedGeneratedSshPrivateKey,
+  markGeneratedSshPrivateKeyDownloaded,
+  saveUserGeneratedSshPrivateKey,
+} from "@/lib/vmSshKeyStore";
 import type { GeneratedSshKeyResponse, SshKey } from "@/types";
 
 export default function SshKeysPage() {
@@ -13,20 +19,9 @@ export default function SshKeysPage() {
   const [submitting, setSubmitting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
-  const [showDownloadConfirm, setShowDownloadConfirm] = useState(false);
-  const [downloadedKeyFilename, setDownloadedKeyFilename] = useState("");
-
-  const downloadPrivateKey = (filename: string, privateKey: string) => {
-    const blob = new Blob([privateKey], { type: "application/x-pem-file" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-  };
+  const [success, setSuccess] = useState("");
+  const [selectedKey, setSelectedKey] = useState<SshKey | null>(null);
+  const [copiedPublic, setCopiedPublic] = useState(false);
 
   const loadKeys = async () => {
     try {
@@ -46,6 +41,7 @@ export default function SshKeysPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccess("");
     setSubmitting(true);
     try {
       await api.post("/ssh-keys", form);
@@ -71,6 +67,7 @@ export default function SshKeysPage() {
 
   const handleGenerateKey = async () => {
     setError("");
+    setSuccess("");
     setGenerating(true);
     try {
       const generatedName = `Auto Key ${new Date().toLocaleDateString()}`;
@@ -79,16 +76,34 @@ export default function SshKeysPage() {
         { name: generatedName },
       );
 
-      if (data?.privateKey && data?.filename) {
-        downloadPrivateKey(data.filename, data.privateKey);
-        setDownloadedKeyFilename(data.filename);
-        setShowDownloadConfirm(true);
+      if (data?.key?.id && data?.privateKey) {
+        saveUserGeneratedSshPrivateKey(data.key.id, data.privateKey, data.filename);
+
+        if (!hasDownloadedGeneratedSshPrivateKey(data.key.id) && data.filename) {
+          downloadPrivateKeyAsPem(data.filename, data.privateKey);
+          markGeneratedSshPrivateKeyDownloaded(data.key.id);
+        }
+
+        setSuccess(
+          "SSH key generated. Private key download started once — save it securely.",
+        );
       }
+
       await loadKeys();
     } catch (err: unknown) {
       setError(getErrorMessage(err, "Failed to generate SSH key"));
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleCopyPublicKey = async (publicKey: string) => {
+    try {
+      await navigator.clipboard.writeText(publicKey);
+      setCopiedPublic(true);
+      setTimeout(() => setCopiedPublic(false), 1800);
+    } catch {
+      // silent
     }
   };
 
@@ -126,7 +141,7 @@ export default function SshKeysPage() {
             </h3>
             <p className="text-sm text-cyber-text-dim mt-1">
               Don&apos;t have an SSH key? Generate one automatically in one click.
-              We will save the public key and download your private key securely.
+              We save your public key and trigger a one-time private key download.
             </p>
           </div>
           <button
@@ -139,18 +154,24 @@ export default function SshKeysPage() {
         </div>
       </div>
 
+      {error && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-green/10 border border-cyber-green/30 text-cyber-green text-sm">
+          {success}
+        </div>
+      )}
+
       {/* Add Key Form */}
       {showForm && (
         <div className="cyber-card mb-6">
           <h3 className="text-lg font-semibold text-cyber-text mb-4">
             Add New SSH Key
           </h3>
-
-          {error && (
-            <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm">
-              {error}
-            </div>
-          )}
 
           <form onSubmit={handleCreate} className="space-y-4">
             <div>
@@ -270,50 +291,74 @@ export default function SshKeysPage() {
                   </div>
                 </div>
               </div>
-              <button
-                onClick={() => handleDelete(key.id)}
-                className="text-cyber-text-dim hover:text-cyber-red transition-colors p-2"
-                title="Delete key"
-              >
-                <svg
-                  className="w-5 h-5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedKey(key)}
+                  className="px-3 py-1.5 text-xs rounded-md border border-cyber-cyan/30 text-cyber-cyan hover:bg-cyber-cyan/10 transition-colors"
+                  title="View key details"
                 >
-                  <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+                  View
+                </button>
+                <button
+                  onClick={() => handleDelete(key.id)}
+                  className="text-cyber-text-dim hover:text-cyber-red transition-colors p-2"
+                  title="Delete key"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  >
+                    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {showDownloadConfirm && (
+      {selectedKey && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-lg cyber-card border border-cyber-cyan/30">
             <h3 className="text-lg font-semibold text-cyber-text mb-2">
-              Save your private key now
+              SSH key details
             </h3>
-            <p className="text-sm text-cyber-text-dim mb-3">
-              Your key was generated and the private key download started.
-              This file is shown only once for security.
-            </p>
-            <div className="text-xs font-mono text-cyber-cyan/90 bg-cyber-cyan/10 border border-cyber-cyan/20 rounded-lg px-3 py-2 mb-4 break-all">
-              {downloadedKeyFilename}
+            <div className="text-sm text-cyber-text-dim mb-2">
+              Name: <span className="text-cyber-text">{selectedKey.name}</span>
             </div>
-            <ul className="text-sm text-cyber-text-dim list-disc pl-5 space-y-1 mb-5">
-              <li>Store it in a secure place (password manager or encrypted folder).</li>
-              <li>Never share it and never upload it anywhere.</li>
-              <li>If lost, generate a new key and delete the old one.</li>
-            </ul>
-            <div className="flex justify-end gap-3">
+            <div className="text-xs text-cyber-text-dim font-mono mb-4 break-all">
+              Fingerprint: {selectedKey.fingerprint}
+            </div>
+
+            <label className="block text-xs font-medium text-cyber-text-dim mb-1.5">
+              Public key
+            </label>
+            <textarea
+              readOnly
+              value={selectedKey.publicKey}
+              className="cyber-input !h-36 font-mono text-xs mb-4"
+            />
+
+            <div className="mb-4 text-xs text-cyber-text-dim">
+              Private keys are never shown again for security. If you lose yours,
+              generate a new key and remove the old one.
+            </div>
+
+            <div className="flex justify-end gap-2">
               <button
-                onClick={() => setShowDownloadConfirm(false)}
+                onClick={() => handleCopyPublicKey(selectedKey.publicKey)}
+                className="cyber-btn-secondary !py-2.5"
+              >
+                {copiedPublic ? "Copied" : "Copy Public Key"}
+              </button>
+              <button
+                onClick={() => setSelectedKey(null)}
                 className="cyber-btn-primary !py-2.5"
               >
-                I downloaded it
+                Close
               </button>
             </div>
           </div>
