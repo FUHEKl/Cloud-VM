@@ -64,31 +64,37 @@ Create `.env` from `.env.example` and set required values (JWT secrets, DB crede
 
 Use Docker Compose from the project root.
 
-## 🧬 Shared PostgreSQL + Prisma Safety (Critical)
+## 🧬 Database ownership model (current state)
 
-This project uses **one shared PostgreSQL database** across multiple services (`auth`, `user`, `vm`, `payment`, `ai`).
+The platform is now operated in **split-DB mode** (one Postgres database per domain service):
 
-Because of that, a schema diff from a partial Prisma schema can generate destructive SQL.
+- `cloudvm_auth`
+- `cloudvm_user`
+- `cloudvm_vm`
+- `cloudvm_payment`
+- `cloudvm_ai`
 
-### Never do this
+This aligns with microservice ownership boundaries and is the active model used in the current deployment workflow.
 
-- Do **not** run `prisma migrate dev` from `services/user` or `services/vm` (or any service with incomplete ownership of all DB objects) against shared environments.
-- Do **not** accept Prisma-generated `DROP COLUMN` / `DROP TABLE` changes for shared tables without explicit cross-service review.
+### Important compatibility note
 
-### Safe workflow
+`docker-compose.yml` still keeps a **shared-DB fallback** when `*_DATABASE_URL` variables are not set, to avoid breaking older local setups during migration.
 
-- Use `prisma migrate deploy` in containers/startup for applying committed migrations.
-- Treat `auth` as the canonical owner of core shared tables (`users`, `refresh_tokens`, `ssh_keys`, `plans`, `virtual_machines`, `user_quotas`, `payments`, `notifications`) and MFA additions (`mfaEnabled`, `mfaSecret`, `mfaEnabledAt`, `mfaRecoveryCodeHashes`, `mfaRecoveryCodesGeneratedAt`, `mfa_audit_logs`).
-- `payment` owns `stripe_webhook_events`.
-- `user` and `vm` include schema-alignment migrations for shared parity, but should not introduce destructive changes to auth-owned objects.
+For strict isolation, always set:
 
-### Migrations added for safety
+- `AUTH_DATABASE_URL`
+- `USER_DATABASE_URL`
+- `VM_DATABASE_URL`
+- `PAYMENT_DATABASE_URL`
+- `AI_DATABASE_URL`
 
-- `services/payment/prisma/migrations/20260415000001_init_payment/` (creates `stripe_webhook_events`)
-- `services/user/prisma/migrations/20260415000002_align_shared_auth_schema/` (idempotent shared-schema alignment)
-- `services/vm/prisma/migrations/20260415000002_align_shared_auth_schema/` (idempotent shared-schema alignment)
+See `DB_ISOLATION_PHASED_ROLLOUT.md` for phased migration rationale, boundaries, and operational notes.
 
-If you need to evolve shared tables, do it with coordinated migrations and review across all affected services.
+### Migration safety rules
+
+- Prefer `prisma migrate deploy` in containers/startup.
+- Avoid destructive schema changes without cross-service review.
+- Keep ownership explicit per service and use API/event synchronization for cross-domain data needs.
 
 ### 4) Access
 
