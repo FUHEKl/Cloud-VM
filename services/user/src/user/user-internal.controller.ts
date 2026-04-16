@@ -75,6 +75,21 @@ export class UserInternalController {
     return this.userService.getInternalSubscriptionAccess(userId);
   }
 
+  @Get("quota/:userId")
+  @HttpCode(HttpStatus.OK)
+  async getQuotaSnapshot(
+    @Headers("x-sync-token") syncToken: string | undefined,
+    @Param("userId") userId: string,
+  ) {
+    this.assertSyncToken(syncToken);
+
+    if (!userId) {
+      throw new BadRequestException("Missing userId");
+    }
+
+    return this.userService.getInternalQuotaSnapshot(userId);
+  }
+
   @Post("subscription-activate")
   @HttpCode(HttpStatus.OK)
   async activateSubscription(

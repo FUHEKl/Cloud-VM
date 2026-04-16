@@ -239,6 +239,17 @@ export default function DashboardLayout({
   };
 
   const subscription = profileDetails?.subscription;
+  const formatHourMetric = (hours: number) => {
+    if (!Number.isFinite(hours) || hours <= 0) return "0 min";
+
+    const totalMinutes = Math.max(0, Math.round(hours * 60));
+    if (totalMinutes < 60) return `${totalMinutes} min`;
+
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (m === 0) return `${h} h`;
+    return `${h} h ${m} min`;
+  };
   const usagePercent =
     subscription && subscription.vmHoursIncluded > 0
       ? Math.min(100, (subscription.vmHoursUsed / subscription.vmHoursIncluded) * 100)
@@ -334,7 +345,7 @@ export default function DashboardLayout({
               <div className="flex items-center justify-between text-[11px] mb-1">
                 <span className="text-cyber-text-dim uppercase">{subscription.planId}</span>
                 <span className="text-cyber-text">
-                  {subscription.vmHoursRemaining.toFixed(1)}h left
+                  {formatHourMetric(subscription.vmHoursRemaining)} left
                 </span>
               </div>
               <div className="h-1.5 rounded-full bg-cyber-border/60 overflow-hidden">

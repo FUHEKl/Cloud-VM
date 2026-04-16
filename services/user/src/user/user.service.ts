@@ -461,6 +461,57 @@ export class UserService {
     };
   }
 
+  async getInternalQuotaSnapshot(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: true,
+        quota: {
+          select: {
+            maxVms: true,
+            maxCpu: true,
+            maxRamMb: true,
+            maxDiskGb: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    if (user.role === "ADMIN") {
+      return {
+        hasActiveSubscription: true,
+        planId: SubscriptionPlanId.UNLIMITED,
+        quota: {
+          ...UserService.UNLIMITED_QUOTA,
+        },
+      };
+    }
+
+    if (!user.quota) {
+      return {
+        hasActiveSubscription: false,
+        planId: null,
+        quota: null,
+      };
+    }
+
+    return {
+      hasActiveSubscription: true,
+      planId: this.resolvePlanFromQuota(user.quota),
+      quota: {
+        maxVms: user.quota.maxVms,
+        maxCpu: user.quota.maxCpu,
+        maxRamMb: user.quota.maxRamMb,
+        maxDiskGb: user.quota.maxDiskGb,
+      },
+    };
+  }
+
   async activateSubscriptionPlanFromInternal(
     userId: string,
     planId: "student" | "pro" | "enterprise" | "unlimited",

@@ -15,6 +15,17 @@ import { generateKeyPairSync } from "crypto";
 import sshpk from "sshpk";
 import { decryptVmPrivateKey, encryptVmPrivateKey } from "./vm-ssh-key.crypto";
 
+type InternalQuotaSnapshot = {
+  hasActiveSubscription: boolean;
+  planId: string | null;
+  quota: {
+    maxVms: number;
+    maxCpu: number;
+    maxRamMb: number;
+    maxDiskGb: number;
+  } | null;
+};
+
 @Injectable()
 export class VmService {
   private readonly logger = new Logger(VmService.name);
@@ -86,7 +97,52 @@ export class VmService {
     private readonly nats: NatsService,
   ) {}
 
+  private getUserServiceUrl(): string {
+    const url = (process.env.USER_SERVICE_URL || "http://user:3003").trim();
+    if (!url) {
+      throw new InternalServerErrorException("Missing USER_SERVICE_URL configuration");
+    }
+    return url;
+  }
+
+  private getInterServiceSyncToken(): string {
+    const token = (process.env.INTER_SERVICE_SYNC_TOKEN || "").trim();
+    if (!token) {
+      throw new InternalServerErrorException("Missing INTER_SERVICE_SYNC_TOKEN configuration");
+    }
+    return token;
+  }
+
+  private async fetchInternalQuotaSnapshot(userId: string): Promise<InternalQuotaSnapshot | null> {
+    const url = `${this.getUserServiceUrl()}/users/internal/quota/${encodeURIComponent(userId)}`;
+    const syncToken = this.getInterServiceSyncToken();
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "x-sync-token": syncToken,
+      },
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new InternalServerErrorException("Failed to load user quota snapshot");
+    }
+
+    return (await response.json()) as InternalQuotaSnapshot;
+  }
+
   async createVm(dto: CreateVmDto, userId: string, role: string) {
+    const isAdmin = role === "ADMIN";
+
+    let remoteQuota: InternalQuotaSnapshot | null = null;
+    if (!isAdmin) {
+      remoteQuota = await this.fetchInternalQuotaSnapshot(userId);
+    }
+
     const vmKeyPair = this.generateVmSshKeyPair();
     const encryptedPrivateKey = encryptVmPrivateKey(vmKeyPair.privateKeyPem);
 
@@ -102,11 +158,30 @@ export class VmService {
         // when concurrent create requests hit at the same time.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
 
-        const quota = await tx.userQuota.findUnique({
+        let quota = await tx.userQuota.findUnique({
           where: { userId },
         });
 
-        if (role !== "ADMIN" && !quota) {
+        if (!isAdmin && remoteQuota?.hasActiveSubscription && remoteQuota.quota) {
+          quota = await tx.userQuota.upsert({
+            where: { userId },
+            update: {
+              maxVms: remoteQuota.quota.maxVms,
+              maxCpu: remoteQuota.quota.maxCpu,
+              maxRamMb: remoteQuota.quota.maxRamMb,
+              maxDiskGb: remoteQuota.quota.maxDiskGb,
+            },
+            create: {
+              userId,
+              maxVms: remoteQuota.quota.maxVms,
+              maxCpu: remoteQuota.quota.maxCpu,
+              maxRamMb: remoteQuota.quota.maxRamMb,
+              maxDiskGb: remoteQuota.quota.maxDiskGb,
+            },
+          });
+        }
+
+        if (!isAdmin && !quota) {
           throw new ForbiddenException(
             "No active subscription found. Please purchase a plan before creating VMs.",
           );
@@ -119,10 +194,10 @@ export class VmService {
           },
         });
 
-        const maxVms = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxVms ?? 0);
-        const maxCpu = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxCpu ?? 0);
-        const maxRamMb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxRamMb ?? 0);
-        const maxDiskGb = role === "ADMIN" ? Number.MAX_SAFE_INTEGER : (quota?.maxDiskGb ?? 0);
+        const maxVms = isAdmin ? Number.MAX_SAFE_INTEGER : (quota?.maxVms ?? 0);
+        const maxCpu = isAdmin ? Number.MAX_SAFE_INTEGER : (quota?.maxCpu ?? 0);
+        const maxRamMb = isAdmin ? Number.MAX_SAFE_INTEGER : (quota?.maxRamMb ?? 0);
+        const maxDiskGb = isAdmin ? Number.MAX_SAFE_INTEGER : (quota?.maxDiskGb ?? 0);
 
         if (activeVms >= maxVms) {
           throw new ForbiddenException(

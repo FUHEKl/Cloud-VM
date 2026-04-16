@@ -94,6 +94,7 @@ export interface VirtualMachine {
   sshHost: string | null;
   sshPort: number | null;
   sshUsername: string | null;
+  stoppedAt?: string | null;
   userId: string;
   planId: string | null;
   plan?: Plan;

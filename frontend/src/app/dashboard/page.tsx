@@ -17,17 +17,20 @@ export default function DashboardPage() {
     error: 0,
   });
   const [recentVms, setRecentVms] = useState<VirtualMachine[]>([]);
+  const [allVms, setAllVms] = useState<VirtualMachine[]>([]);
   const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>("");
+  const [nowMs, setNowMs] = useState(Date.now());
 
   const load = useCallback(async () => {
     setLoadError("");
     setLoading(true);
 
-    const [statsRes, vmsRes, profileRes] = await Promise.allSettled([
+    const [statsRes, vmsRes, vmsAllRes, profileRes] = await Promise.allSettled([
       api.get("/vms/stats"),
       api.get("/vms?limit=5"),
+      api.get("/vms?limit=100"),
       api.get("/users/profile"),
     ]);
 
@@ -41,6 +44,15 @@ export default function DashboardPage() {
         Array.isArray(vmData)
           ? vmData.slice(0, 5)
           : vmData.data?.slice(0, 5) || [],
+      );
+    }
+
+    if (vmsAllRes.status === "fulfilled") {
+      const vmData = vmsAllRes.value.data;
+      setAllVms(
+        Array.isArray(vmData)
+          ? vmData
+          : vmData.data || [],
       );
     }
 
@@ -69,6 +81,11 @@ export default function DashboardPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   const statusColor: Record<string, string> = {
     RUNNING: "cyber-badge-green",
@@ -154,19 +171,89 @@ export default function DashboardPage() {
   ];
 
   const subscription = profileDetails?.subscription;
-  const usage = profileDetails?.usage;
   const quota = profileDetails?.quota;
+
+  const runningVms = allVms.filter((vm) => vm.status === "RUNNING");
+
+  const liveUsage = {
+    vmCount: runningVms.length,
+    cpuUsed: runningVms.reduce((sum, vm) => sum + (vm.cpu || 0), 0),
+    ramMbUsed: runningVms.reduce((sum, vm) => sum + (vm.ramMb || 0), 0),
+    diskGbUsed: runningVms.reduce((sum, vm) => sum + (vm.diskGb || 0), 0),
+  };
+
+  const parseSafeDate = (value?: string | null): Date | null => {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const estimateVmHoursUsed = (
+    vms: VirtualMachine[],
+    cycleStart: Date,
+    cycleCutoff: Date,
+  ) => {
+    let totalHours = 0;
+
+    for (const vm of vms) {
+      const createdAt = parseSafeDate(vm.createdAt);
+      if (!createdAt) continue;
+
+      const started = createdAt > cycleStart ? createdAt : cycleStart;
+      const stoppedAt = parseSafeDate(vm.stoppedAt);
+
+      const nonRunningEnd = stoppedAt ?? cycleCutoff;
+      const ended = vm.status === "RUNNING"
+        ? cycleCutoff
+        : nonRunningEnd < cycleCutoff
+          ? nonRunningEnd
+          : cycleCutoff;
+
+      if (ended <= started) continue;
+      totalHours += (ended.getTime() - started.getTime()) / (1000 * 60 * 60);
+    }
+
+    return totalHours;
+  };
+
+  const computedVmHoursUsed = (() => {
+    if (!subscription) return 0;
+
+    const cycleStart = parseSafeDate(subscription.cycleStartedAt);
+    const cycleEnd = parseSafeDate(subscription.cycleEndsAt);
+    if (!cycleStart || !cycleEnd) return subscription.vmHoursUsed;
+
+    const now = new Date(nowMs);
+    const cutoff = now < cycleEnd ? now : cycleEnd;
+    return estimateVmHoursUsed(allVms, cycleStart, cutoff);
+  })();
+
+  const computedVmHoursRemaining = subscription
+    ? Math.max(0, subscription.vmHoursIncluded - computedVmHoursUsed)
+    : 0;
+
+  const formatHourMetric = (hours: number) => {
+    if (!Number.isFinite(hours) || hours <= 0) return "0 min";
+
+    const totalMinutes = Math.max(0, Math.round(hours * 60));
+    if (totalMinutes < 60) return `${totalMinutes} min`;
+
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (m === 0) return `${h} h`;
+    return `${h} h ${m} min`;
+  };
 
   const toPercent = (used: number, max: number) => {
     if (!Number.isFinite(max) || max <= 0) return 0;
     return Math.min(100, Math.max(0, (used / max) * 100));
   };
 
-  const cpuPct = usage && quota ? toPercent(usage.cpuUsed, quota.maxCpu) : 0;
-  const ramPct = usage && quota ? toPercent(usage.ramMbUsed, quota.maxRamMb) : 0;
-  const diskPct = usage && quota ? toPercent(usage.diskGbUsed, quota.maxDiskGb) : 0;
+  const cpuPct = quota ? toPercent(liveUsage.cpuUsed, quota.maxCpu) : 0;
+  const ramPct = quota ? toPercent(liveUsage.ramMbUsed, quota.maxRamMb) : 0;
+  const diskPct = quota ? toPercent(liveUsage.diskGbUsed, quota.maxDiskGb) : 0;
   const vmHoursPct = subscription
-    ? toPercent(subscription.vmHoursUsed, subscription.vmHoursIncluded)
+    ? toPercent(computedVmHoursUsed, subscription.vmHoursIncluded)
     : 0;
 
   const showUpgradeHint =
@@ -256,19 +343,19 @@ export default function DashboardPage() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <p className="text-cyber-text-dim">CPU in use</p>
-                <p className="text-cyber-text font-semibold">{profileDetails.usage.cpuUsed} vCPU</p>
+                <p className="text-cyber-text font-semibold">{liveUsage.cpuUsed} vCPU</p>
               </div>
               <div>
                 <p className="text-cyber-text-dim">RAM in use</p>
-                <p className="text-cyber-text font-semibold">{(profileDetails.usage.ramMbUsed / 1024).toFixed(2)} GB</p>
+                <p className="text-cyber-text font-semibold">{(liveUsage.ramMbUsed / 1024).toFixed(2)} GB</p>
               </div>
               <div>
                 <p className="text-cyber-text-dim">Disk in use</p>
-                <p className="text-cyber-text font-semibold">{profileDetails.usage.diskGbUsed} GB</p>
+                <p className="text-cyber-text font-semibold">{liveUsage.diskGbUsed} GB</p>
               </div>
               <div>
                 <p className="text-cyber-text-dim">VM count</p>
-                <p className="text-cyber-text font-semibold">{profileDetails.usage.vmCount}</p>
+                <p className="text-cyber-text font-semibold">{liveUsage.vmCount}</p>
               </div>
             </div>
 
@@ -276,19 +363,19 @@ export default function DashboardPage() {
               <div className="mt-4 space-y-3">
                 <ProgressRow
                   label="CPU"
-                  used={`${usage?.cpuUsed ?? 0} vCPU`}
+                  used={`${liveUsage.cpuUsed} vCPU`}
                   max={`${quota.maxCpu} vCPU`}
                   pct={cpuPct}
                 />
                 <ProgressRow
                   label="RAM"
-                  used={`${((usage?.ramMbUsed ?? 0) / 1024).toFixed(2)} GB`}
+                  used={`${(liveUsage.ramMbUsed / 1024).toFixed(2)} GB`}
                   max={`${(quota.maxRamMb / 1024).toFixed(2)} GB`}
                   pct={ramPct}
                 />
                 <ProgressRow
                   label="Disk"
-                  used={`${usage?.diskGbUsed ?? 0} GB`}
+                  used={`${liveUsage.diskGbUsed} GB`}
                   max={`${quota.maxDiskGb} GB`}
                   pct={diskPct}
                 />
@@ -303,18 +390,18 @@ export default function DashboardPage() {
                 Plan: <span className="text-cyber-cyan uppercase font-semibold">{profileDetails.subscription.planId}</span>
               </p>
               <p>
-                VM hours used: <span className="text-cyber-text font-semibold">{profileDetails.subscription.vmHoursUsed.toFixed(2)}</span>
+                VM hours used: <span className="text-cyber-text font-semibold">{formatHourMetric(computedVmHoursUsed)}</span>
               </p>
               <p>
-                VM hours remaining: <span className="text-cyber-green font-semibold">{profileDetails.subscription.vmHoursRemaining.toFixed(2)}</span>
+                VM hours remaining: <span className="text-cyber-green font-semibold">{formatHourMetric(computedVmHoursRemaining)}</span>
               </p>
               <p>
                 Cycle ends: <span className="text-cyber-text">{new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}</span>
               </p>
               <ProgressRow
                 label="VM Hours"
-                used={`${subscription?.vmHoursUsed.toFixed(2) ?? "0.00"} h`}
-                max={`${subscription?.vmHoursIncluded ?? 0} h`}
+                used={formatHourMetric(computedVmHoursUsed)}
+                max={formatHourMetric(subscription?.vmHoursIncluded ?? 0)}
                 pct={vmHoursPct}
               />
               {showUpgradeHint && (
