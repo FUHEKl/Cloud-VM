@@ -12,7 +12,7 @@ import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
 import { Client, ClientChannel } from "ssh2";
 import { TerminalTelemetryService } from "./terminal-telemetry.service";
-import { createHash } from "crypto";
+import { createHash, createPrivateKey } from "crypto";
 
 interface SshSession {
   sshClient: Client;
@@ -53,6 +53,51 @@ function buildSocketFingerprint(client: Socket): string {
     ).trim();
 
   return createHash("sha256").update(`${ip}|${userAgent}`).digest("hex");
+}
+
+function normalizePem(input: string): string {
+  const normalized = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  return normalized.length > 0 ? `${normalized}\n` : "";
+}
+
+function normalizePrivateKeyForSsh(
+  rawKey: string,
+  logger: Logger,
+  sourceLabel: string,
+): string {
+  const normalized = normalizePem(rawKey);
+  if (!normalized) return "";
+
+  if (
+    normalized.includes("-----BEGIN OPENSSH PRIVATE KEY-----") ||
+    normalized.includes("-----BEGIN RSA PRIVATE KEY-----") ||
+    normalized.includes("-----BEGIN EC PRIVATE KEY-----") ||
+    normalized.includes("-----BEGIN DSA PRIVATE KEY-----")
+  ) {
+    return normalized;
+  }
+
+  if (
+    normalized.includes("-----BEGIN PRIVATE KEY-----") ||
+    normalized.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")
+  ) {
+    try {
+      const keyObject = createPrivateKey(normalized);
+      if (keyObject.asymmetricKeyType === "rsa" || keyObject.asymmetricKeyType === "rsa-pss") {
+        return keyObject.export({ format: "pem", type: "pkcs1" }).toString();
+      }
+      if (keyObject.asymmetricKeyType === "ec") {
+        return keyObject.export({ format: "pem", type: "sec1" }).toString();
+      }
+      return keyObject.export({ format: "pem", type: "pkcs8" }).toString();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown key parse error";
+      logger.warn(`Unable to normalize ${sourceLabel} private key format: ${message}`);
+      return normalized;
+    }
+  }
+
+  return normalized;
 }
 
 const terminalCorsOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
@@ -143,9 +188,13 @@ export class TerminalGateway implements OnGatewayDisconnect {
       (process.env.TERMINAL_SSH_BASTION_USERNAME || process.env.ONE_USERNAME || "").trim();
     const password =
       (process.env.TERMINAL_SSH_BASTION_PASSWORD || process.env.ONE_PASSWORD || "").trim();
-    const privateKey = (process.env.TERMINAL_SSH_BASTION_PRIVATE_KEY || "")
-      .replace(/\\n/g, "\n")
-      .trim();
+    const rawPrivateKey = (process.env.TERMINAL_SSH_BASTION_PRIVATE_KEY || "").replace(
+      /\\n/g,
+      "\n",
+    );
+    const privateKey = rawPrivateKey
+      ? normalizePrivateKeyForSsh(rawPrivateKey, this.logger, "bastion")
+      : "";
     const port = Number(process.env.TERMINAL_SSH_BASTION_PORT || 22);
 
     if (!host || !username || (!password && !privateKey)) {
@@ -279,6 +328,9 @@ export class TerminalGateway implements OnGatewayDisconnect {
       let hasAttemptedPasswordRetry = false;
       const bastionConfig = this.getBastionConfig();
       const username = payload.username ?? vm.sshUsername ?? "cloudvm";
+      const normalizedPrivateKey = payload.privateKey
+        ? normalizePrivateKeyForSsh(payload.privateKey, this.logger, `vm:${payload.vmId}`)
+        : "";
       const defaultVmPassword = (process.env.TERMINAL_DEFAULT_VM_PASSWORD || "cloudvm123").trim();
       let connectTimeout: NodeJS.Timeout | null = null;
 
@@ -409,8 +461,8 @@ export class TerminalGateway implements OnGatewayDisconnect {
                 keepaliveCountMax: 5,
               };
 
-              if (payload.privateKey && payload.privateKey.trim().length > 0) {
-                tunneledConnectOptions.privateKey = payload.privateKey;
+              if (normalizedPrivateKey) {
+                tunneledConnectOptions.privateKey = normalizedPrivateKey;
                 if (this.allowPasswordFallback && username === "cloudvm" && defaultVmPassword) {
                   // Reliability fallback: when key auth fails due delayed/partial key setup,
                   // also allow password auth on the same attempt for the default cloudvm user.
@@ -474,7 +526,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
         if (
           hasAttemptedPasswordRetry ||
           !this.allowPasswordFallback ||
-          !payload.privateKey ||
+          !normalizedPrivateKey ||
           !candidatePassword ||
           username !== "cloudvm"
         ) {
@@ -695,7 +747,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       this.logger.log(
         `SSH connecting: ${username}@${vm.sshHost}:${vm.sshPort ?? 22} ` +
-        `auth=${payload.privateKey ? "privateKey" : "password"}`,
+        `auth=${normalizedPrivateKey ? "privateKey" : "password"}`,
       );
 
       connectTimeout = setTimeout(() => {
@@ -715,8 +767,8 @@ export class TerminalGateway implements OnGatewayDisconnect {
         this.cleanupSession(client.id);
       }, this.sshConnectTimeoutMs);
 
-      if (payload.privateKey && payload.privateKey.trim().length > 0) {
-        connectOptions.privateKey = payload.privateKey;
+      if (normalizedPrivateKey) {
+        connectOptions.privateKey = normalizedPrivateKey;
         if (this.allowPasswordFallback && username === "cloudvm" && defaultVmPassword) {
           // Reliability fallback for dev/lab templates that may race key injection.
           connectOptions.password = payload.password || defaultVmPassword;
