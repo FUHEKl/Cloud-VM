@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import api from "@/lib/api";
 import clsx from "clsx";
 import AssistantChat from "@/components/assistant/AssistantChat";
+import { useVmSocket } from "@/hooks/useVmSocket";
 import type { UserProfileDetails } from "@/types";
 
 const navItems = [
@@ -161,7 +162,17 @@ export default function DashboardLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
+  const profileRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAssistantRoute = pathname?.startsWith("/dashboard/assistant");
+
+  const loadProfileDetails = useCallback(async () => {
+    try {
+      const { data } = await api.get<UserProfileDetails>("/users/profile");
+      setProfileDetails(data);
+    } catch {
+      // optional widget data
+    }
+  }, []);
 
   useEffect(() => {
     fetchUser();
@@ -181,18 +192,29 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (!isAuthenticated) return;
+    void loadProfileDetails();
+  }, [isAuthenticated, loadProfileDetails]);
 
-    const loadProfileDetails = async () => {
-      try {
-        const { data } = await api.get<UserProfileDetails>("/users/profile");
-        setProfileDetails(data);
-      } catch {
-        // optional widget data
+  useVmSocket((data) => {
+    if (!isAuthenticated || !data?.vmId) return;
+
+    if (profileRefreshTimerRef.current) {
+      clearTimeout(profileRefreshTimerRef.current);
+    }
+
+    profileRefreshTimerRef.current = setTimeout(() => {
+      void loadProfileDetails();
+      profileRefreshTimerRef.current = null;
+    }, 300);
+  });
+
+  useEffect(() => {
+    return () => {
+      if (profileRefreshTimerRef.current) {
+        clearTimeout(profileRefreshTimerRef.current);
       }
     };
-
-    void loadProfileDetails();
-  }, [isAuthenticated]);
+  }, []);
 
   if (isLoading) {
     return (
