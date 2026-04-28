@@ -28,3 +28,6 @@ scripts/*
 !scripts/postgres/**
 !scripts/opennebula/
 !scripts/opennebula/**
+
+
+split-repos/
