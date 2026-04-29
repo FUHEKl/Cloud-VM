@@ -1,3 +1,8 @@
+"use client";
+
+import type { CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
+
 const features = [
   {
     icon: (
@@ -122,6 +127,33 @@ const colorClasses = {
 };
 
 export default function Features() {
+  const baseCount = features.length;
+  const slides = useMemo(() => [...features, features[0]], []);
+  const [index, setIndex] = useState(0);
+  const [isResetting, setIsResetting] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setIndex((prev) => prev + 1);
+    }, 3500);
+
+    return () => clearInterval(interval);
+  }, [baseCount]);
+
+  useEffect(() => {
+    if (index === baseCount) {
+      const resetTimer = setTimeout(() => {
+        setIsResetting(true);
+        setIndex(0);
+        requestAnimationFrame(() => {
+          setIsResetting(false);
+        });
+      }, 650);
+
+      return () => clearTimeout(resetTimer);
+    }
+  }, [index, baseCount]);
+
   return (
     <section id="features" className="py-24 relative">
       <div className="absolute inset-0 bg-glow-radial opacity-50" />
@@ -137,30 +169,42 @@ export default function Features() {
             environment
           </p>
         </div>
-
-        {/* Feature grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {features.map((feature) => {
-            const c = colorClasses[feature.color];
-            return (
-              <div
-                key={feature.title}
-                className={`cyber-card transition-all duration-300 ${c.hover}`}
-              >
+        {/* Feature slider */}
+        <div className="feature-marquee">
+          <div
+            className={`feature-marquee-track ${
+              isResetting ? "is-resetting" : ""
+            }`}
+            style={{
+              "--index": index,
+            } as CSSProperties}
+          >
+            {slides.map((feature, slideIndex) => {
+              const c = colorClasses[feature.color];
+              const activeIndex = index === baseCount ? baseCount : index % baseCount;
+              const isActive = slideIndex === activeIndex;
+              return (
                 <div
-                  className={`w-12 h-12 rounded-lg ${c.bg} border ${c.border} flex items-center justify-center mb-4`}
+                  key={`${feature.title}-${slideIndex}`}
+                  className={`feature-card cyber-card transition-all duration-300 ${c.hover} ${
+                    isActive ? "is-active" : "is-inactive"
+                  }`}
                 >
-                  <div className={c.icon}>{feature.icon}</div>
+                  <div
+                    className={`w-12 h-12 rounded-lg ${c.bg} border ${c.border} flex items-center justify-center mb-4`}
+                  >
+                    <div className={c.icon}>{feature.icon}</div>
+                  </div>
+                  <h3 className="text-lg font-semibold text-cyber-text mb-2">
+                    {feature.title}
+                  </h3>
+                  <p className="text-cyber-text-dim text-sm leading-relaxed">
+                    {feature.description}
+                  </p>
                 </div>
-                <h3 className="text-lg font-semibold text-cyber-text mb-2">
-                  {feature.title}
-                </h3>
-                <p className="text-cyber-text-dim text-sm leading-relaxed">
-                  {feature.description}
-                </p>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
     </section>
