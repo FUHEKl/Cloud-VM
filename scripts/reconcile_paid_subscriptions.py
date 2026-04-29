@@ -67,19 +67,19 @@ def parse_dotenv(env_path: Path) -> Dict[str, str]:
         values[key.strip()] = value.strip()
     return values
 
-
-def run_psql(db: str, sql: str, settings: DbSettings) -> str:
-    # Use stdin to avoid shell-quoting edge cases.
+def run_psql(db: str, sql: str, settings: DbSettings, vars: Dict[str, str] | None = None) -> str:
     cmd = [
-        "docker",
-        "exec",
-        "-i",
-        settings.container,
-        "sh",
-        "-lc",
-        f"PGPASSWORD='{settings.pg_password}' psql -U '{settings.pg_user}' -d '{db}' -v ON_ERROR_STOP=1 --csv -f -",
+        "docker", "exec", "-i", settings.container,
+        "psql", "-U", settings.pg_user, "-d", db,
+        "-v", "ON_ERROR_STOP=1", "--csv", "-f", "-"
     ]
-    result = subprocess.run(cmd, input=sql, text=True, capture_output=True)
+    if vars:
+        for k, v in vars.items():
+            cmd.extend(["-v", f"{k}={v}"])
+
+    env = os.environ.copy()
+    env["PGPASSWORD"] = settings.pg_password
+    result = subprocess.run(cmd, input=sql, text=True, capture_output=True, env=env)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"psql failed for database '{db}'")
     return result.stdout
@@ -150,8 +150,8 @@ ORDER BY "userId", "createdAt" DESC;
 
 
 def user_exists(user_id: str, settings: DbSettings) -> bool:
-    sql = f"SELECT EXISTS(SELECT 1 FROM users WHERE id = '{user_id}') AS exists;"
-    out = run_psql(settings.user_db, sql, settings).strip().splitlines()
+    sql = "SELECT EXISTS(SELECT 1 FROM users WHERE id = :'user_id') AS exists;"
+    out = run_psql(settings.user_db, sql, settings, vars={"user_id": user_id})
     if len(out) < 2:
         return False
     return out[1].strip().lower() in {"t", "true", "1"}
@@ -159,16 +159,16 @@ def user_exists(user_id: str, settings: DbSettings) -> bool:
 
 def apply_quota(user_id: str, quota: Dict[str, int], settings: DbSettings) -> None:
     sql = f"""
-INSERT INTO user_quotas (id, "userId", "maxVms", "maxCpu", "maxRamMb", "maxDiskGb")
-VALUES (gen_random_uuid()::text, '{user_id}', {quota['maxVms']}, {quota['maxCpu']}, {quota['maxRamMb']}, {quota['maxDiskGb']})
-ON CONFLICT ("userId") DO UPDATE
-SET
-  "maxVms" = EXCLUDED."maxVms",
-  "maxCpu" = EXCLUDED."maxCpu",
-  "maxRamMb" = EXCLUDED."maxRamMb",
-  "maxDiskGb" = EXCLUDED."maxDiskGb";
-"""
-    run_psql(settings.user_db, sql, settings)
+    INSERT INTO user_quotas (id, "userId", "maxVms", "maxCpu", "maxRamMb", "maxDiskGb")
+    VALUES (gen_random_uuid()::text, :'user_id', {quota['maxVms']}, {quota['maxCpu']}, {quota['maxRamMb']}, {quota['maxDiskGb']})
+    ON CONFLICT ("userId") DO UPDATE
+    SET
+    "maxVms" = EXCLUDED."maxVms",
+    "maxCpu" = EXCLUDED."maxCpu",
+    "maxRamMb" = EXCLUDED."maxRamMb",
+    "maxDiskGb" = EXCLUDED."maxDiskGb";
+    """
+    run_psql(settings.user_db, sql, settings, vars={"user_id": user_id})
 
 
 def main() -> int:
