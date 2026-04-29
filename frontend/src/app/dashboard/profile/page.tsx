@@ -73,7 +73,11 @@ export default function ProfilePage() {
     setChangingPw(true);
     setPasswordMsg({ type: "", text: "" });
     try {
-      await api.patch("/users/profile/password", {
+      // FIX: call auth service instead of user service so that both the auth
+      // database and the user service projection are updated consistently.
+      // Previously only the user service DB was updated, leaving the auth DB
+      // with a stale password hash that would accept the old password on login.
+      await api.patch("/auth/password", {
         oldPassword: passwords.oldPassword,
         newPassword: passwords.newPassword,
       });
