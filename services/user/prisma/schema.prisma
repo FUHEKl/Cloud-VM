@@ -34,6 +34,8 @@ model User {
   mfaEnabledAt  DateTime?
   mfaRecoveryCodeHashes String[] @default([])
   mfaRecoveryCodesGeneratedAt DateTime?
+  studentEmailVerified        Boolean   @default(false)
+  studentEmailVerifiedAt      DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -43,6 +45,7 @@ model User {
   quota         UserQuota?
   notifications Notification[]
   mfaAuditLogs  MfaAuditLog[]
+  studentEmailVerifications StudentEmailVerification[]
 
   @@map("users")
 }
@@ -131,4 +134,16 @@ model MfaAuditLog {
 
   @@index([userId, createdAt])
   @@map("mfa_audit_logs")
+}
+
+model StudentEmailVerification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("student_email_verifications")
 }

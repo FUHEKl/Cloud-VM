@@ -90,6 +90,21 @@ export class UserInternalController {
     return this.userService.getInternalQuotaSnapshot(userId);
   }
 
+  @Get("student-verification/:userId")
+  @HttpCode(HttpStatus.OK)
+  async getStudentVerification(
+    @Headers("x-sync-token") syncToken: string | undefined,
+    @Param("userId") userId: string,
+  ) {
+    this.assertSyncToken(syncToken);
+
+    if (!userId) {
+      throw new BadRequestException("Missing userId");
+    }
+
+    return this.userService.getStudentVerificationStatus(userId);
+  }
+
   @Post("subscription-activate")
   @HttpCode(HttpStatus.OK)
   async activateSubscription(

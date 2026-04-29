@@ -252,6 +252,22 @@ export class PaymentService {
     }
   }
 
+  private async getStudentVerification(userId: string): Promise<{ verified: boolean }> {
+    const url = `${this.getUserServiceUrl()}/users/internal/student-verification/${encodeURIComponent(userId)}`;
+    const syncToken = this.getInterServiceSyncToken();
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { "x-sync-token": syncToken },
+    });
+
+    if (!response.ok) {
+      throw new InternalServerErrorException("Failed to fetch student verification status");
+    }
+
+    return response.json() as Promise<{ verified: boolean }>;
+  }
+
   private async enforcePlanPurchaseRules(userId: string, requestedPlanId: PlanId) {
     const snapshot = await this.getSubscriptionAccessSnapshot(userId);
 
@@ -332,6 +348,13 @@ export class PaymentService {
     const plan = PLAN_CATALOG[planId];
     if (!plan) {
       throw new BadRequestException("Invalid plan id");
+    }
+
+    if (planId === "student") {
+      const verification = await this.getStudentVerification(userId);
+      if (!verification.verified) {
+        throw new ForbiddenException("Student email verification is required before purchasing the Student plan.");
+      }
     }
 
     await this.enforcePlanPurchaseRules(userId, planId);

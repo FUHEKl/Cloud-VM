@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Patch,
+  Post,
   Delete,
   Body,
   Param,
@@ -55,6 +56,19 @@ export class UserController {
   @Patch("profile/password")
   changePassword(@CurrentUser() user: any, @Body() dto: ChangePasswordDto) {
     return this.userService.changePassword(user.userId, dto);
+  }
+
+  @Post("student-verification/request")
+  requestStudentVerification(@CurrentUser() user: any) {
+    return this.userService.requestStudentEmailVerification(user.userId);
+  }
+
+  @Post("student-verification/confirm")
+  confirmStudentVerification(
+    @CurrentUser() user: any,
+    @Body() body: { code: string },
+  ) {
+    return this.userService.confirmStudentEmailVerification(user.userId, body.code);
   }
 
   @Get("stats")

@@ -18,6 +18,8 @@ export interface User {
   mfaEnabled?: boolean;
   mfaEnabledAt?: string | null;
   mfaRecoveryCodesGeneratedAt?: string | null;
+  studentEmailVerified?: boolean;
+  studentEmailVerifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }

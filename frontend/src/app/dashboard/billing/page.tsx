@@ -72,6 +72,9 @@ export default function BillingPage() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
+  const [studentCode, setStudentCode] = useState("");
+  const [studentMessage, setStudentMessage] = useState("");
+  const [studentBusy, setStudentBusy] = useState(false);
   const [plans, setPlans] = useState<PublicPlanCatalogItem[]>(
     fallbackPlans.map((plan, index) => ({
       id: plan.id,
@@ -217,6 +220,40 @@ export default function BillingPage() {
     return method.length > 48 ? `${method.slice(0, 48)}…` : method;
   };
 
+  const sendStudentCode = async () => {
+    setStudentMessage("");
+    setStudentBusy(true);
+    try {
+      await api.post("/users/student-verification/request");
+      setStudentMessage("Verification code sent to your email.");
+    } catch (err: unknown) {
+      setStudentMessage(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Failed to send verification code. Make sure you registered with a student email.",
+      );
+    } finally {
+      setStudentBusy(false);
+    }
+  };
+
+  const confirmStudentCode = async () => {
+    if (!studentCode.trim()) return;
+    setStudentMessage("");
+    setStudentBusy(true);
+    try {
+      await api.post("/users/student-verification/confirm", { code: studentCode.trim() });
+      setStudentMessage("✓ Student email verified!");
+      setStudentCode("");
+      await loadProfileDetails();
+    } catch (err: unknown) {
+      setStudentMessage(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? "Invalid or expired code.",
+      );
+    } finally {
+      setStudentBusy(false);
+    }
+  };
+
   const startCheckout = async (planId: PlanId) => {
     setError("");
     if (isAdmin) {
@@ -304,11 +341,56 @@ export default function BillingPage() {
               </ul>
               <button
                 onClick={() => startCheckout(plan.id)}
-                disabled={loadingPlan !== null || !isPlanSelectable(plan.id)}
+                disabled={
+                  loadingPlan !== null ||
+                  !isPlanSelectable(plan.id) ||
+                  (plan.id === "student" && !profileDetails?.studentEmailVerified)
+                }
                 className="cyber-btn-primary w-full disabled:opacity-50"
               >
                 {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.amountDt} DT`}
               </button>
+              {plan.id === "student" && !profileDetails?.studentEmailVerified && (
+                <div className="mt-3 space-y-2">
+                  <p className="text-xs text-cyber-orange">
+                    Verify your student email to unlock this plan.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={sendStudentCode}
+                    disabled={studentBusy}
+                    className="cyber-btn-secondary w-full !py-1.5 text-sm disabled:opacity-50"
+                  >
+                    {studentBusy ? "Sending..." : "Send verification code"}
+                  </button>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={studentCode}
+                      onChange={(e) => setStudentCode(e.target.value)}
+                      placeholder="Enter 6-digit code"
+                      maxLength={6}
+                      className="flex-1 bg-cyber-bg border border-cyber-border rounded px-3 py-1.5 text-sm text-cyber-text focus:outline-none focus:border-cyber-cyan"
+                    />
+                    <button
+                      type="button"
+                      onClick={confirmStudentCode}
+                      disabled={studentBusy || !studentCode.trim()}
+                      className="cyber-btn-primary !py-1.5 text-sm disabled:opacity-50"
+                    >
+                      Verify
+                    </button>
+                  </div>
+                  {studentMessage && (
+                    <p className={`text-xs mt-1 ${studentMessage.startsWith("✓") ? "text-cyber-green" : "text-cyber-orange"}`}>
+                      {studentMessage}
+                    </p>
+                  )}
+                </div>
+              )}
+              {plan.id === "student" && profileDetails?.studentEmailVerified && (
+                <p className="text-xs text-cyber-green mt-2">✓ Student email verified</p>
+              )}
               {!isPlanSelectable(plan.id) && (
                 <p className="text-xs text-cyber-orange mt-2">
                   {planBlockReason(plan.id)}

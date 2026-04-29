@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
 } from "@nestjs/common";
+import crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -14,6 +15,7 @@ import {
   SubscriptionPlanId,
 } from "./dto/admin-set-subscription.dto";
 import * as bcrypt from "bcrypt";
+import { EmailService } from "../common/email/email.service";
 
 type ManagedPlanId =
   | SubscriptionPlanId.STUDENT
@@ -141,9 +143,99 @@ const SUBSCRIPTION_QUOTAS: Record<SubscriptionPlanId, {
 
 @Injectable()
 export class UserService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService,
+  ) {}
 
   private static readonly SAME_OR_LOWER_UNLOCK_USAGE_RATIO = 0.9;
+
+  // ── Student email verification ─────────────────────────────────────────────
+
+  private isStudentEmail(email: string): boolean {
+    const allowed = (process.env.STUDENT_EMAIL_DOMAINS || ".edu")
+      .split(",")
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    const lower = email.toLowerCase();
+    return allowed.some((domain) =>
+      domain.startsWith("@") ? lower.endsWith(domain) : lower.endsWith(domain),
+    );
+  }
+
+  async requestStudentEmailVerification(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+
+    if (!this.isStudentEmail(user.email)) {
+      throw new BadRequestException(
+        "Your email address does not belong to a recognised student domain.",
+      );
+    }
+
+    if (user.studentEmailVerified) {
+      return { message: "Student email is already verified." };
+    }
+
+    // Generate a 6-digit code, hash it for storage
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = crypto.createHash("sha256").update(code).digest("hex");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    // Delete any previous pending verifications for this user
+    await this.prisma.studentEmailVerification.deleteMany({
+      where: { userId },
+    });
+
+    await this.prisma.studentEmailVerification.create({
+      data: { userId, email: user.email, codeHash, expiresAt },
+    });
+
+    await this.emailService.sendStudentVerificationCode(user.email, code);
+
+    return { message: "Verification code sent to your email." };
+  }
+
+  async confirmStudentEmailVerification(userId: string, code: string) {
+    if (!code || typeof code !== "string") {
+      throw new BadRequestException("Verification code is required.");
+    }
+
+    const codeHash = crypto.createHash("sha256").update(code.trim()).digest("hex");
+
+    const record = await this.prisma.studentEmailVerification.findFirst({
+      where: { userId, codeHash },
+    });
+
+    if (!record) {
+      throw new BadRequestException("Invalid verification code.");
+    }
+
+    if (record.expiresAt < new Date()) {
+      await this.prisma.studentEmailVerification.delete({ where: { id: record.id } });
+      throw new BadRequestException("Verification code has expired. Please request a new one.");
+    }
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { studentEmailVerified: true, studentEmailVerifiedAt: new Date() },
+    });
+
+    await this.prisma.studentEmailVerification.deleteMany({ where: { userId } });
+
+    return { message: "Student email verified successfully." };
+  }
+
+  async getStudentVerificationStatus(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { studentEmailVerified: true, studentEmailVerifiedAt: true },
+    });
+    if (!user) throw new NotFoundException("User not found");
+    return { verified: user.studentEmailVerified, verifiedAt: user.studentEmailVerifiedAt };
+  }
+
+  // ── End student email verification ────────────────────────────────────────
 
   async syncFromAuth(payload: {
     id: string;
