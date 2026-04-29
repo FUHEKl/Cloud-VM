@@ -153,6 +153,14 @@ services:
       - INTER_SERVICE_SYNC_TOKEN=${INTER_SERVICE_SYNC_TOKEN}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      # ── Email (student verification) ──────────────
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_SECURE=${SMTP_SECURE}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - STUDENT_EMAIL_DOMAINS=${STUDENT_EMAIL_DOMAINS}
     depends_on:
       postgres:
         condition: service_healthy
@@ -239,8 +247,6 @@ services:
       retries: 3
 
   # ── Python Worker ────────────────────────────────
-  # SECURITY: OpenNebula credentials are intentionally scoped ONLY to worker
-  # (least privilege). No other service receives ONE_USERNAME/ONE_PASSWORD.
   worker:
     build:
       context: ./worker
