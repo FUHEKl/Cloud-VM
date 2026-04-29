@@ -674,6 +674,10 @@ export class AuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
+    if (!user.isActive) {
+      await this.registerFailedLogin(dto.email, req);
+      throw new UnauthorizedException("Account is deactivated");
+    }
     await this.clearFailedLogins(dto.email);
 
     try {
@@ -1340,6 +1344,41 @@ export class AuthService {
     });
 
     return { message: "Logged out from all sessions" };
+  }
+
+  // FIX: password change updates auth DB first, then syncs to user service
+  // projection so both databases stay consistent. Previously only the user
+  // service DB was updated, leaving the auth DB with a stale password hash.
+  async changePassword(
+    userId: string,
+    dto: { oldPassword: string; newPassword: string },
+    req: Request,
+  ) {
+    await this.assertCurrentPassword(userId, dto.oldPassword);
+
+    const hashedPassword = await bcrypt.hash(dto.newPassword, 10);
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    try {
+      await this.syncUserProjection(user);
+    } catch (error) {
+      this.logger.error(
+        `User projection sync failed after password change: ${(error as Error).message}`,
+      );
+    }
+
+    this.securityLogger.log({
+      eventType: "auth.password.changed",
+      userId,
+      ip: getClientIp(req),
+      result: "success",
+    });
+
+    return { message: "Password changed successfully" };
   }
 
   async getProfile(userId: string) {

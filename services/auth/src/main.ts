@@ -87,6 +87,7 @@ function buildTrustedOrigins(req: Request, allowedOrigins: string[]): Set<string
   return trusted;
 }
 
+
 async function bootstrap() {
   validateJwtSecretsOrThrow();
 

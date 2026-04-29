@@ -16,6 +16,7 @@ import { LoginDto } from "./dto/login.dto";
 import { VerifyMfaDto } from "./dto/verify-mfa.dto";
 import { EnableMfaDto } from "./dto/enable-mfa.dto";
 import { MfaReauthDto } from "./dto/mfa-reauth.dto";
+import { ChangePasswordDto } from "./dto/change-password.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { parseCookie } from "../common/security/request-security.util";
@@ -278,6 +279,18 @@ export class AuthController {
   ) {
     this.clearAuthCookies(req, res);
     return this.authService.logoutAllSessions(req.user.userId, req);
+  }
+
+  // FIX: password change now goes through auth service so both auth DB
+  // and user service projection stay in sync via syncUserProjection().
+  @Post("password")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async changePassword(
+    @Req() req: RequestWithUser,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(req.user.userId, dto, req);
   }
 
   @Get("me")
