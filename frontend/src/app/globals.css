@@ -108,3 +108,55 @@
 .terminal-container .xterm-viewport {
   overflow-y: auto !important;
 }
+/* Feature cards sliding carousel */
+.feature-marquee {
+  --card-width: clamp(360px, 62vw, 560px);
+  --card-gap: 32px;
+  --step: calc(var(--card-width) + var(--card-gap));
+  --offset: calc((100% - var(--card-width)) / 2);
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: visible;
+  display: flex;
+  justify-content: center;
+  width: min(100%, calc(var(--card-width) + 360px));
+  margin: 0 auto;
+  padding: 24px 120px 40px;
+  min-height: 360px;
+}
+
+.feature-marquee-track {
+  display: flex;
+  align-items: center;
+  gap: var(--card-gap);
+  width: max-content;
+  will-change: transform;
+  transition: transform 600ms ease;
+  transform: translateX(calc(-1 * var(--index) * var(--step) + var(--offset)));
+}
+
+.feature-marquee-track.is-resetting {
+  transition: none;
+}
+
+.feature-card {
+  width: var(--card-width);
+  flex: 0 0 var(--card-width);
+  min-height: 280px;
+  transform: scale(0.9);
+  transform-origin: center;
+  transition: transform 600ms ease, filter 400ms ease, opacity 400ms ease;
+}
+
+.feature-card.is-active {
+  transform: scale(1.12);
+  filter: none;
+  opacity: 1;
+  z-index: 2;
+  box-shadow: 0 30px 60px rgba(0, 240, 136, 0.15);
+}
+
+.feature-card.is-inactive {
+  filter: blur(5px);
+  opacity: 0.45;
+}
