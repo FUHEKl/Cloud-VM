@@ -190,6 +190,9 @@ export default function VmsListPage() {
           <p className="text-cyber-text-dim mb-6">
             Create your first VM to get started
           </p>
+          <Link href="/dashboard/vms/create" className="cyber-btn-primary">
+            Create VM
+          </Link>
         </div>
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">

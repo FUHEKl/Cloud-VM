@@ -9,7 +9,6 @@ import type { UserProfileDetails, VmStats, VirtualMachine } from "@/types";
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const [isNewUser, setIsNewUser] = useState(false);
   const [vmStats, setVmStats] = useState<VmStats>({
     total: 0,
     running: 0,
@@ -23,13 +22,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>("");
   const [nowMs, setNowMs] = useState(Date.now());
-
-  useEffect(() => {
-    if (sessionStorage.getItem("justRegistered") === "1") {
-      setIsNewUser(true);
-      sessionStorage.removeItem("justRegistered");
-    }
-  }, []);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -305,17 +297,8 @@ export default function DashboardPage() {
       {/* Welcome */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-cyber-text">
-          {isNewUser ? (
-            <>
-              Welcome,{" "}
-              <span className="text-cyber-green">{user?.firstName}!</span>
-            </>
-          ) : (
-            <>
-              Welcome back,{" "}
-              <span className="text-cyber-green">{user?.firstName}</span>
-            </>
-          )}
+          Welcome back,{" "}
+          <span className="text-cyber-green">{user?.firstName}</span>
         </h1>
         <p className="text-cyber-text-dim mt-1">
           Here&apos;s an overview of your cloud infrastructure
@@ -495,7 +478,7 @@ export default function DashboardPage() {
             </Link>
 
             <Link
-              href="/dashboard/assistant"
+              href="/dashboard/profile"
               className="flex items-center gap-3 px-4 py-3 rounded-lg border border-cyber-border hover:border-cyber-cyan/30 hover:bg-cyber-cyan/5 transition-all duration-200"
             >
               <div className="w-8 h-8 rounded-lg bg-cyber-cyan/10 border border-cyber-cyan/20 flex items-center justify-center text-cyber-cyan">
@@ -506,50 +489,19 @@ export default function DashboardPage() {
                   stroke="currentColor"
                   strokeWidth="2"
                 >
-                  <rect x="4" y="5" width="16" height="12" rx="2" />
-                  <path d="M9 10h6M12 17v3" />
-                  <circle cx="8" cy="11" r="1" />
-                  <circle cx="16" cy="11" r="1" />
+                  <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
                 </svg>
               </div>
               <div>
                 <div className="text-sm font-medium text-cyber-text">
-                  AI Assistant
+                  Profile
                 </div>
                 <div className="text-xs text-cyber-text-dim">
-                  Chat with your cloud AI
+                  Update your profile
                 </div>
               </div>
             </Link>
-
-            {!user?.mfaEnabled && (
-              <Link
-                href="/dashboard/profile"
-                className="flex items-center gap-3 px-4 py-3 rounded-lg border border-cyber-border hover:border-cyber-orange/30 hover:bg-cyber-orange/5 transition-all duration-200"
-              >
-                <div className="w-8 h-8 rounded-lg bg-cyber-orange/10 border border-cyber-orange/20 flex items-center justify-center text-cyber-orange">
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <rect x="5" y="11" width="14" height="10" rx="2" />
-                    <path d="M8 11V7a4 4 0 018 0v4" />
-                    <circle cx="12" cy="16" r="1" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="text-sm font-medium text-cyber-text">
-                    Setup MFA
-                  </div>
-                  <div className="text-xs text-cyber-text-dim">
-                    Secure your account
-                  </div>
-                </div>
-              </Link>
-            )}
           </div>
         </div>
 

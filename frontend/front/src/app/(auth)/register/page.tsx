@@ -36,7 +36,6 @@ export default function RegisterPage() {
         firstName: form.firstName,
         lastName: form.lastName,
       });
-      sessionStorage.setItem("justRegistered", "1");
       router.push("/dashboard");
     } catch (err) {
       setError(getErrorMessage(err, "Registration failed"));

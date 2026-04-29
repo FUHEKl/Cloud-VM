@@ -161,8 +161,6 @@ export default function DashboardLayout({
   const { user, isLoading, isAuthenticated, fetchUser, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const profileMenuRef = useRef<HTMLDivElement>(null);
   const [profileDetails, setProfileDetails] = useState<UserProfileDetails | null>(null);
   const profileRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAssistantRoute = pathname?.startsWith("/dashboard/assistant");
@@ -185,16 +183,6 @@ export default function DashboardLayout({
       router.replace("/login");
     }
   }, [isLoading, isAuthenticated, router]);
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
-        setProfileMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   useEffect(() => {
     if (isAssistantRoute && assistantOpen) {
@@ -359,6 +347,21 @@ export default function DashboardLayout({
 
         {/* User section */}
         <div className="p-4 border-t border-cyber-border">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-9 h-9 rounded-full bg-cyber-green/20 border border-cyber-green/30 flex items-center justify-center text-cyber-green font-semibold text-sm">
+              {user?.firstName?.[0]}
+              {user?.lastName?.[0]}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-cyber-text truncate">
+                {user?.firstName} {user?.lastName}
+              </div>
+              <div className="text-xs text-cyber-text-dim truncate">
+                {user?.email}
+              </div>
+            </div>
+          </div>
+
           {subscription && subscription.planId !== "unlimited" && (
             <div className="mb-3 p-2 rounded-lg border border-cyber-border bg-cyber-bg-soft/30">
               <div className="flex items-center justify-between text-[11px] mb-1">
@@ -376,72 +379,21 @@ export default function DashboardLayout({
             </div>
           )}
 
-          {/* Profile dropdown trigger */}
-          <div className="relative" ref={profileMenuRef}>
-            <button
-              onClick={() => setProfileMenuOpen((prev) => !prev)}
-              className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-cyber-border/30 transition-all duration-200 text-left"
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-cyber-text-dim hover:text-cyber-red hover:bg-cyber-red/10 transition-all duration-200"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
             >
-              <div className="w-9 h-9 rounded-full bg-cyber-green/20 border border-cyber-green/30 flex items-center justify-center text-cyber-green font-semibold text-sm flex-shrink-0">
-                {user?.firstName?.[0]}
-                {user?.lastName?.[0]}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-cyber-text truncate">
-                  {user?.firstName} {user?.lastName}
-                </div>
-                <div className="text-xs text-cyber-text-dim truncate">
-                  {user?.email}
-                </div>
-              </div>
-              <svg
-                className={`w-4 h-4 text-cyber-text-dim transition-transform duration-200 flex-shrink-0 ${profileMenuOpen ? "rotate-180" : ""}`}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-
-            {profileMenuOpen && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-cyber-border bg-cyber-card shadow-lg overflow-hidden z-50">
-                <Link
-                  href="/dashboard/profile"
-                  onClick={() => setProfileMenuOpen(false)}
-                  className="flex items-center gap-2 px-4 py-2.5 text-sm text-cyber-text-dim hover:text-cyber-text hover:bg-cyber-border/30 transition-all duration-200"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  >
-                    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-                    <circle cx="12" cy="7" r="4" />
-                  </svg>
-                  Settings
-                </Link>
-                <button
-                  onClick={() => { setProfileMenuOpen(false); handleLogout(); }}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-cyber-text-dim hover:text-cyber-red hover:bg-cyber-red/10 transition-all duration-200"
-                >
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  >
-                    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
-                  </svg>
-                  Sign Out
-                </button>
-              </div>
-            )}
-          </div>
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
+            </svg>
+            Sign Out
+          </button>
         </div>
       </aside>
 
@@ -470,16 +422,6 @@ export default function DashboardLayout({
           </button>
 
           <div className="flex-1" />
-
-          {/* User name top-right */}
-          <div className="hidden sm:flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-cyber-green/20 border border-cyber-green/30 flex items-center justify-center text-cyber-green font-semibold text-xs">
-              {user?.firstName?.[0]}{user?.lastName?.[0]}
-            </div>
-            <span className="text-sm font-medium text-cyber-text">
-              {user?.firstName} {user?.lastName}
-            </span>
-          </div>
 
           {/* Role badge */}
           {user?.role === "ADMIN" && (
