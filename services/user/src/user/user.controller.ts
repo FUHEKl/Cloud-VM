@@ -48,6 +48,11 @@ export class UserController {
     return this.userService.getProfile(user.userId);
   }
 
+  @Get("profile-summary")
+  getProfileSummary(@CurrentUser() user: any) {
+    return this.userService.getProfileSummary(user.userId);
+  }
+
   @Patch("profile")
   updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
     return this.userService.updateProfile(user.userId, dto);

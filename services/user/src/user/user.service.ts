@@ -311,7 +311,6 @@ export class UserService {
     }
   }
 
-
   private excludePassword(user: any) {
     const { password, ...userWithoutPassword } = user;
     return userWithoutPassword;
@@ -369,7 +368,6 @@ export class UserService {
     });
   }
 
-
   private resolvePlanForUser(args: {
     role: string;
     quota?: {
@@ -382,7 +380,6 @@ export class UserService {
     if (args.role === "ADMIN") {
       return SubscriptionPlanId.UNLIMITED;
     }
-
 
     return this.resolvePlanFromQuota(args.quota);
   }
@@ -419,24 +416,33 @@ export class UserService {
   }
 
   async getProfile(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        quota: true,
-      },
-    });
+    // ✅ FIX: compute cycle dates once up-front so all 3 queries fire in parallel
+    const now = new Date();
+    const cycleStartedAt = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // ✅ FIX: all 3 DB queries run simultaneously instead of sequentially
+    const [user, resourceUsage, vmsForHours] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { quota: true },
+      }),
+      this.prisma.virtualMachine.aggregate({
+        where: { userId, status: { not: "DELETED" as any } },
+        _sum: { cpu: true, ramMb: true, diskGb: true },
+        _count: { id: true },
+      }),
+      this.prisma.virtualMachine.findMany({
+        where: {
+          userId,
+          status: { not: "DELETED" as any },
+        },
+        select: { status: true, createdAt: true, stoppedAt: true },
+      }),
+    ]);
 
     if (!user) {
       throw new NotFoundException("User not found");
     }
-
-    const resourceUsage = await this.prisma.virtualMachine.aggregate({
-      where: { userId, status: { not: "DELETED" as any } },
-      _sum: { cpu: true, ramMb: true, diskGb: true },
-      _count: { id: true },
-    });
-
-    const now = new Date();
 
     const planId = this.resolvePlanForUser({
       role: user.role,
@@ -454,18 +460,8 @@ export class UserService {
     } | null = null;
 
     if (planId) {
-      const cycleStartedAt = new Date(now.getFullYear(), now.getMonth(), 1);
       const cycleEndsAt = this.getBillingCycleEnd(cycleStartedAt);
       const vmHoursIncluded = SUBSCRIPTION_QUOTAS[planId].vmHoursMonthly;
-
-      const vmsForHours = await this.prisma.virtualMachine.findMany({
-        where: {
-          userId,
-          createdAt: { gte: cycleStartedAt },
-          status: { not: "DELETED" as any },
-        },
-        select: { status: true, createdAt: true, stoppedAt: true },
-      });
 
       const vmHoursUsed = this.estimateVmHoursUsed(
         vmsForHours,
@@ -515,6 +511,87 @@ export class UserService {
         ramMbUsed,
         diskGbUsed,
       },
+      subscription,
+    };
+  }
+
+  async getProfileSummary(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { quota: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    const now = new Date();
+
+    const planId = this.resolvePlanForUser({
+      role: user.role,
+      quota: user.quota,
+    });
+
+    let subscription: {
+      planId: SubscriptionPlanId;
+      cycleStartedAt: Date;
+      cycleEndsAt: Date;
+      vmHoursIncluded: number;
+      vmHoursUsed: number;
+      vmHoursRemaining: number;
+      canRenewSamePlan: boolean;
+    } | null = null;
+
+    if (planId) {
+      const cycleStartedAt = new Date(now.getFullYear(), now.getMonth(), 1);
+      const cycleEndsAt = this.getBillingCycleEnd(cycleStartedAt);
+      const vmHoursIncluded = SUBSCRIPTION_QUOTAS[planId].vmHoursMonthly;
+
+      const vmsForHours = await this.prisma.virtualMachine.findMany({
+        where: {
+          userId,
+          status: { not: "DELETED" as any },
+        },
+        select: { status: true, createdAt: true, stoppedAt: true },
+      });
+
+      const vmHoursUsed = this.estimateVmHoursUsed(
+        vmsForHours,
+        cycleStartedAt,
+        now < cycleEndsAt ? now : cycleEndsAt,
+      );
+
+      const vmHoursRemaining = planId === SubscriptionPlanId.UNLIMITED
+        ? Number.MAX_SAFE_INTEGER
+        : Math.max(0, Number((vmHoursIncluded - vmHoursUsed).toFixed(2)));
+
+      const sameOrLowerUnlockedByUsage =
+        planId !== SubscriptionPlanId.UNLIMITED &&
+        vmHoursIncluded > 0 &&
+        vmHoursUsed >= vmHoursIncluded * UserService.SAME_OR_LOWER_UNLOCK_USAGE_RATIO;
+
+      subscription = {
+        planId,
+        cycleStartedAt,
+        cycleEndsAt,
+        vmHoursIncluded,
+        vmHoursUsed,
+        vmHoursRemaining,
+        canRenewSamePlan:
+          planId === SubscriptionPlanId.UNLIMITED
+            ? false
+            : now >= cycleEndsAt || sameOrLowerUnlockedByUsage,
+      };
+    }
+
+    const safeUser = this.excludePassword(user);
+    const effectiveQuota = user.role === "ADMIN"
+      ? UserService.UNLIMITED_QUOTA
+      : user.quota;
+
+    return {
+      ...safeUser,
+      quota: effectiveQuota,
       subscription,
     };
   }
@@ -794,7 +871,6 @@ export class UserService {
     const finalPlan = user.role === "ADMIN" ? SubscriptionPlanId.UNLIMITED : dto.planId;
     const quota = await this.upsertQuota(id, finalPlan);
 
-
     return {
       message: "Subscription updated successfully",
       subscription: finalPlan,
@@ -805,7 +881,6 @@ export class UserService {
 
   async getUserBillingSummary(id: string, actorRole?: string) {
     this.assertAdminRole(actorRole);
-
 
     const user = await this.prisma.user.findUnique({
       where: { id },
@@ -844,7 +919,6 @@ export class UserService {
     search?: string,
   ) {
     this.assertAdminRole(actorRole);
-
 
     const skip = (page - 1) * limit;
 

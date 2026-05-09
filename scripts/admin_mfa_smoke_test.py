@@ -26,12 +26,22 @@ import urllib.error
 import urllib.request
 
 
-def call(opener, url: str, method: str = "GET", body: dict | None = None, timeout: int = 25):
+def call(
+    opener,
+    url: str,
+    method: str = "GET",
+    body: dict | None = None,
+    timeout: int = 25,
+    extra_headers: dict[str, str] | None = None,
+):
     data = None
     headers = {}
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+
+    if extra_headers:
+        headers.update(extra_headers)
 
     req = urllib.request.Request(url=url, data=data, method=method, headers=headers)
     try:
@@ -95,6 +105,11 @@ def main() -> int:
         action="store_true",
         help="Fail instead of prompting for MFA input when devOtp is unavailable.",
     )
+    parser.add_argument(
+        "--edge-token",
+        default="",
+        help="Optional shared edge token to send to the gateway directly",
+    )
     args = parser.parse_args()
 
     auth_base = f"{args.base_url.rstrip('/')}/auth"
@@ -104,6 +119,7 @@ def main() -> int:
 
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    extra_headers = {"x-edge-token": args.edge_token} if args.edge_token else None
 
     reg_status, _ = call(
         opener,
@@ -115,6 +131,7 @@ def main() -> int:
             "firstName": "Admin",
             "lastName": "Mfa",
         },
+        extra_headers=extra_headers,
     )
 
     if reg_status == 0:
@@ -155,6 +172,7 @@ def main() -> int:
             "password": password,
             "rememberMe": True,
         },
+        extra_headers=extra_headers,
     )
 
     try:
@@ -192,9 +210,10 @@ def main() -> int:
             "challengeId": login_json.get("challengeId"),
             "code": initial_mfa_code,
         },
+        extra_headers=extra_headers,
     )
 
-    me_status, _ = call(opener, f"{auth_base}/me", "GET")
+    me_status, _ = call(opener, f"{auth_base}/me", "GET", extra_headers=extra_headers)
 
     print(f"MFA_VERIFY_STATUS={verify_status}")
     print(f"ME_AFTER_MFA={me_status}")
@@ -208,6 +227,7 @@ def main() -> int:
         f"{auth_base}/mfa/setup",
         "POST",
         {"password": password},
+        extra_headers=extra_headers,
     )
     try:
         setup_json = json.loads(setup_body or "{}")
@@ -228,6 +248,7 @@ def main() -> int:
         f"{auth_base}/mfa/enable",
         "POST",
         {"code": enable_code},
+        extra_headers=extra_headers,
     )
     print(f"MFA_ENABLE_STATUS={enable_status}")
 
@@ -235,7 +256,7 @@ def main() -> int:
         print("[FAIL] MFA enable endpoint failed")
         return 1
 
-    call(opener, f"{auth_base}/logout", "POST", {})
+    call(opener, f"{auth_base}/logout", "POST", {}, extra_headers=extra_headers)
 
     login2_status, login2_body = call(
         opener,
@@ -246,6 +267,7 @@ def main() -> int:
             "password": password,
             "rememberMe": True,
         },
+        extra_headers=extra_headers,
     )
     try:
         login2_json = json.loads(login2_body or "{}")
@@ -268,9 +290,10 @@ def main() -> int:
             "challengeId": login2_json.get("challengeId"),
             "code": totp_code(setup_secret),
         },
+        extra_headers=extra_headers,
     )
 
-    me2_status, _ = call(opener, f"{auth_base}/me", "GET")
+    me2_status, _ = call(opener, f"{auth_base}/me", "GET", extra_headers=extra_headers)
     print(f"MFA_VERIFY2_STATUS={verify2_status}")
     print(f"ME_AFTER_MFA2={me2_status}")
 
@@ -283,6 +306,7 @@ def main() -> int:
         f"{auth_base}/mfa/disable",
         "POST",
         {"password": password},
+        extra_headers=extra_headers,
     )
     print(f"MFA_DISABLE_STATUS={disable_status}")
     if disable_status != 200:

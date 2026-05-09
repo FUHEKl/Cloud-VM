@@ -39,7 +39,7 @@ export default function DashboardPage() {
       api.get("/vms/stats"),
       api.get("/vms?limit=5"),
       api.get("/vms?limit=100"),
-      api.get("/users/profile"),
+      api.get("/users/profile-summary"),
     ]);
 
     if (statsRes.status === "fulfilled") {

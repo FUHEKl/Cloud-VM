@@ -26,6 +26,15 @@ type InternalQuotaSnapshot = {
   } | null;
 };
 
+type InternalSubscriptionAccessSnapshot = {
+  activePlanId: string | null;
+  canPurchaseSameOrLower: boolean;
+  usageRatio: number;
+  cycleEndsAt?: string;
+  vmHoursUsed?: number;
+  vmHoursIncluded?: number;
+};
+
 @Injectable()
 export class VmService {
   private readonly logger = new Logger(VmService.name);
@@ -133,6 +142,28 @@ export class VmService {
     }
 
     return (await response.json()) as InternalQuotaSnapshot;
+  }
+
+  private async fetchInternalSubscriptionAccessSnapshot(
+    userId: string,
+  ): Promise<InternalSubscriptionAccessSnapshot | null> {
+    const url = `${this.getUserServiceUrl()}/users/internal/subscription-access/${encodeURIComponent(userId)}`;
+    const syncToken = this.getInterServiceSyncToken();
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { "x-sync-token": syncToken },
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new InternalServerErrorException("Failed to load subscription access snapshot");
+    }
+
+    return (await response.json()) as InternalSubscriptionAccessSnapshot;
   }
 
   async createVm(dto: CreateVmDto, userId: string, role: string) {
@@ -419,6 +450,26 @@ export class VmService {
 
   async vmAction(vmId: string, action: string, userId: string, role: string) {
     const vm = await this.getVm(vmId, userId, role);
+
+    const isAdmin = role === "ADMIN";
+    if (!isAdmin && (action === "start" || action === "restart")) {
+      const access = await this.fetchInternalSubscriptionAccessSnapshot(userId);
+
+      if (!access?.activePlanId) {
+        throw new ForbiddenException("No active subscription found. Please purchase a plan.");
+      }
+
+      if (
+        access.activePlanId !== "unlimited" &&
+        Number.isFinite(access.vmHoursIncluded) &&
+        Number.isFinite(access.vmHoursUsed) &&
+        (access.vmHoursUsed ?? 0) >= (access.vmHoursIncluded ?? 0)
+      ) {
+        throw new ForbiddenException(
+          "VM-hour limit reached for the current billing cycle. Stop VMs or upgrade your plan.",
+        );
+      }
+    }
 
     // Validate action based on current status
     const validTransitions: Record<string, string[]> = {

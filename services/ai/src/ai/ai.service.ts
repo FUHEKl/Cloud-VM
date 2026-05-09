@@ -695,7 +695,7 @@ export class AiService {
     const [statsRes, vmsRes, profileRes] = await Promise.allSettled([
       fetch(`${this.vmServiceUrl}/vms/stats`, { headers }),
       fetch(`${this.vmServiceUrl}/vms?limit=5`, { headers }),
-      fetch(`${this.userServiceUrl}/users/profile`, { headers }),
+      fetch(`${this.userServiceUrl}/users/profile-summary`, { headers }),
     ]);
 
     const vmStats = {

@@ -124,7 +124,7 @@ export default function BillingPage() {
 
   const loadProfileDetails = useCallback(async () => {
     try {
-      const { data } = await api.get<UserProfileDetails>("/users/profile");
+      const { data } = await api.get<UserProfileDetails>("/users/profile-summary");
       setProfileDetails(data);
     } catch {
       // optional panel data
@@ -282,6 +282,17 @@ export default function BillingPage() {
     <div className="space-y-6 max-w-6xl">
       <div>
         <h1 className="text-2xl font-bold text-cyber-text mb-2">Billing</h1>
+        {/* ✅ Show skeleton while profile is loading */}
+        {!profileDetails && !isAdmin && (
+          <div className="animate-pulse space-y-3">
+            <div className="h-10 bg-cyber-border/30 rounded w-full" />
+            <div className="grid md:grid-cols-3 gap-4">
+              {[1,2,3].map(i => (
+                <div key={i} className="cyber-card h-48 bg-cyber-border/20" />
+              ))}
+            </div>
+          </div>
+        )}
         <p className="text-cyber-text-dim">
           Plans are billed in Tunisian dinar (DT). Card payment is processed securely with Stripe.
         </p>
