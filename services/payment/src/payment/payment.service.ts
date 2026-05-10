@@ -165,20 +165,49 @@ export class PaymentService {
     return token;
   }
 
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    errorMessage: string,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        const detail = body.replace(/\s+/g, " ").slice(0, 300);
+        throw new InternalServerErrorException(
+          detail ? `${errorMessage}: ${detail}` : errorMessage,
+        );
+      }
+
+      return response;
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) throw error;
+      throw new InternalServerErrorException(errorMessage);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async getSubscriptionAccessSnapshot(userId: string): Promise<SubscriptionAccessSnapshot> {
     const url = `${this.getUserServiceUrl()}/users/internal/subscription-access/${encodeURIComponent(userId)}`;
     const syncToken = this.getInterServiceSyncToken();
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "x-sync-token": syncToken,
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: { "x-sync-token": syncToken },
       },
-    });
-
-    if (!response.ok) {
-      throw new InternalServerErrorException("Failed to verify subscription access state");
-    }
+      "Failed to verify subscription access state",
+    );
 
     return (await response.json()) as SubscriptionAccessSnapshot;
   }
@@ -238,32 +267,32 @@ export class PaymentService {
     const url = `${this.getUserServiceUrl()}/users/internal/subscription-activate`;
     const syncToken = this.getInterServiceSyncToken();
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-sync-token": syncToken,
+    await this.fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-sync-token": syncToken,
+        },
+        body: JSON.stringify({ userId, planId }),
       },
-      body: JSON.stringify({ userId, planId }),
-    });
-
-    if (!response.ok) {
-      throw new InternalServerErrorException("Failed to activate subscription quota");
-    }
+      "Failed to activate subscription quota",
+    );
   }
 
   private async getStudentVerification(userId: string): Promise<{ verified: boolean }> {
     const url = `${this.getUserServiceUrl()}/users/internal/student-verification/${encodeURIComponent(userId)}`;
     const syncToken = this.getInterServiceSyncToken();
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { "x-sync-token": syncToken },
-    });
-
-    if (!response.ok) {
-      throw new InternalServerErrorException("Failed to fetch student verification status");
-    }
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: { "x-sync-token": syncToken },
+      },
+      "Failed to fetch student verification status",
+    );
 
     return response.json() as Promise<{ verified: boolean }>;
   }

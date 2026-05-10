@@ -12,6 +12,7 @@ import { Request } from "express";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { CreateCheckoutSessionDto } from "./dto/create-checkout-session.dto";
+import { ConfirmCheckoutSessionDto } from "./dto/confirm-checkout-session.dto";
 import { PaymentService } from "./payment.service";
 
 @Controller("payments")
@@ -31,9 +32,9 @@ export class PaymentController {
   @UseGuards(JwtAuthGuard)
   async confirmCheckoutSession(
     @CurrentUser() user: { userId: string },
-    @Body() dto: { sessionId?: string },
+    @Body() dto: ConfirmCheckoutSessionDto,
   ) {
-    return this.paymentService.confirmCheckoutSession(user.userId, dto?.sessionId || "");
+    return this.paymentService.confirmCheckoutSession(user.userId, dto.sessionId);
   }
 
   @Get("me")
