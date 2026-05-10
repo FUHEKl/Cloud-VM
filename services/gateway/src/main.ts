@@ -1,5 +1,6 @@
 import "./env";
 import { NestFactory } from "@nestjs/core";
+import { timingSafeEqual } from "crypto";
 import { ValidationPipe } from "@nestjs/common";
 import { NextFunction, Request, Response, json, urlencoded } from "express";
 import helmet from "helmet";
@@ -140,9 +141,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.getHttpAdapter().getInstance().set("trust proxy", 1);
 
-  // SECURITY: 12mb allows memory exhaustion attacks.
-  app.use(json({ limit: "1mb" }));
-  app.use(urlencoded({ extended: true, limit: "1mb" }));
+  // SECURITY: reduce body limit to prevent large-payload DoS attacks.
+  app.use(json({ limit: "16kb" }));
+  app.use(urlencoded({ extended: true, limit: "16kb" }));
 
   app.use(
     // SECURITY: baseline hardening headers to reduce browser-side attack surface.
@@ -246,7 +247,24 @@ async function bootstrap() {
 
     // SECURITY: optional shared secret to reject direct gateway access bypassing edge.
     if (edgeProxyToken && !allowLocalDevBypass) {
-      if (!edgeToken || edgeToken !== edgeProxyToken) {
+      if (!edgeToken) {
+        return res.status(403).json({
+          statusCode: 403,
+          message: "Edge verification failed",
+          error: "Forbidden",
+        });
+      }
+      try {
+        const a = Buffer.from(edgeToken);
+        const b = Buffer.from(edgeProxyToken);
+        if (a.length !== b.length || !timingSafeEqual(a, b)) {
+          return res.status(403).json({
+            statusCode: 403,
+            message: "Edge verification failed",
+            error: "Forbidden",
+          });
+        }
+      } catch {
         return res.status(403).json({
           statusCode: 403,
           message: "Edge verification failed",
@@ -319,10 +337,25 @@ async function bootstrap() {
             allowedOrigins,
           );
 
-        if (edgeProxyToken && !allowLocalDevBypass && edgeToken !== edgeProxyToken) {
-          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-          socket.destroy();
-          return;
+        if (edgeProxyToken && !allowLocalDevBypass) {
+          if (!edgeToken) {
+            socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+          try {
+            const a = Buffer.from(edgeToken);
+            const b = Buffer.from(edgeProxyToken);
+            if (a.length !== b.length || !timingSafeEqual(a, b)) {
+              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+              socket.destroy();
+              return;
+            }
+          } catch {
+            socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+            socket.destroy();
+            return;
+          }
         }
 
         const url: string = req.url ?? "";

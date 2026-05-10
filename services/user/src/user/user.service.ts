@@ -240,7 +240,6 @@ export class UserService {
   async syncFromAuth(payload: {
     id: string;
     email: string;
-    password: string;
     firstName: string;
     lastName: string;
     role?: "USER" | "ADMIN";
@@ -254,7 +253,6 @@ export class UserService {
       where: { id: payload.id },
       update: {
         email: payload.email,
-        password: payload.password,
         firstName: payload.firstName,
         lastName: payload.lastName,
         role,
@@ -265,7 +263,7 @@ export class UserService {
       create: {
         id: payload.id,
         email: payload.email,
-        password: payload.password,
+        password: '',
         firstName: payload.firstName,
         lastName: payload.lastName,
         role,

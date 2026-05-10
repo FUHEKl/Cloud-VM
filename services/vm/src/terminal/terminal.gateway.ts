@@ -918,6 +918,13 @@ export class TerminalGateway implements OnGatewayDisconnect {
       this.logger.warn(
         `SECURITY: dangerous terminal command observed socket=${client.id} violations=${nextViolations} command=\"${safePreview}\"`,
       );
+      // If configured to block, enforce violation threshold and reject input
+      if (this.dangerousInputMode === "block" && nextViolations >= this.dangerousInputMaxViolations) {
+        this.logger.warn(
+          `SECURITY: blocking terminal input socket=${client.id} violations=${nextViolations}`,
+        );
+        return false;
+      }
     }
 
     return true;

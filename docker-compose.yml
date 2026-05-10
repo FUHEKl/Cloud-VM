@@ -22,7 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-change-this-redis-password}"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -42,7 +42,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      - EDGE_PROXY_TOKEN=${EDGE_PROXY_TOKEN:-edge-local-dev-token-change-me}
+      - EDGE_PROXY_TOKEN=${EDGE_PROXY_TOKEN}
     volumes:
       - ./nginx/conf.d/default.conf:/etc/nginx/templates/default.conf.template:ro
       - ./nginx/ssl:/etc/nginx/ssl
@@ -77,11 +77,11 @@ services:
       - VM_SERVICE_URL=http://vm:3004
       - AI_SERVICE_URL=http://ai:3006
       - PAYMENT_SERVICE_URL=http://payment:3005
-      - EDGE_PROXY_TOKEN=${EDGE_PROXY_TOKEN:-edge-local-dev-token-change-me}
+      - EDGE_PROXY_TOKEN=${EDGE_PROXY_TOKEN}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CORS_ORIGIN=${CORS_ORIGIN}
     depends_on:
       - redis
@@ -132,7 +132,7 @@ services:
       - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,7 +180,7 @@ services:
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CORS_ORIGIN=${CORS_ORIGIN}
       - ONE_XMLRPC=${ONE_XMLRPC:-}
       - ONE_USERNAME=${ONE_USERNAME:-}
@@ -256,7 +256,7 @@ services:
     environment:
       - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - ONE_XMLRPC=${ONE_XMLRPC}
       - ONE_USERNAME=${ONE_USERNAME}
       - ONE_PASSWORD=${ONE_PASSWORD}

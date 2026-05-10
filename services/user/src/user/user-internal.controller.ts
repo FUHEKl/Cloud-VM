@@ -16,7 +16,6 @@ import { UserService } from "./user.service";
 interface SyncUserPayload {
   id: string;
   email: string;
-  password: string;
   firstName: string;
   lastName: string;
   role?: "USER" | "ADMIN";
@@ -60,7 +59,7 @@ export class UserInternalController {
   ) {
     this.assertSyncToken(syncToken);
 
-    if (!payload?.id || !payload?.email || !payload?.password) {
+    if (!payload?.id || !payload?.email) {
       throw new BadRequestException("Missing required sync payload fields");
     }
 

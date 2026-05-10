@@ -10,6 +10,9 @@ import {
   UseGuards,
   ForbiddenException,
   Logger,
+  Req,
+  HttpException,
+  HttpStatus,
 } from "@nestjs/common";
 import { UserService } from "./user.service";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
@@ -59,9 +62,42 @@ export class UserController {
     return this.userService.updateProfile(user.userId, dto);
   }
 
+  // Forward password changes to the canonical auth service so the auth DB
+  // and user projection remain in sync. We forward the caller's
+  // Authorization header (JWT) so the auth service can authenticate the
+  // request as usual.
   @Patch("profile/password")
-  changePassword(@CurrentUser() user: any, @Body() dto: ChangePasswordDto) {
-    return this.userService.changePassword(user.userId, dto);
+  async changePassword(
+    @Req() req: any,
+    @CurrentUser() user: any,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    const authBase = (process.env.AUTH_SERVICE_URL || "http://auth:3002").replace(/\/+$/, "");
+    const url = `${authBase}/auth/password`;
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const authHeader = (req.headers && (req.headers.authorization || req.headers.Authorization)) || undefined;
+    if (authHeader) headers["authorization"] = authHeader as string;
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(dto),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new HttpException(
+          `Auth service responded ${res.status}: ${body}`,
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      return await res.json();
+    } catch (err) {
+      throw new HttpException(`Failed to contact auth service: ${(err as Error).message}`, HttpStatus.BAD_GATEWAY);
+    }
   }
 
   @Post("student-verification/request")
