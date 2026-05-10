@@ -23,25 +23,43 @@ export class RedisThrottlerStorage {
     isBlocked: boolean;
     timeToBlockExpire: number;
   }> {
-    if (this.redis.status !== "ready") {
-      await this.redis.connect();
+    try {
+      if (this.redis.status !== "ready") {
+        await this.redis.connect();
+      }
+
+      const fullKey = `security:gateway:throttler:${key}`;
+      const totalHits = await this.redis.incr(fullKey);
+
+      if (totalHits === 1) {
+        await this.redis.pexpire(fullKey, ttl);
+      }
+
+      const timeToExpire = Math.max(0, await this.redis.pttl(fullKey));
+      const isBlocked = totalHits > limit;
+
+      return {
+        totalHits,
+        timeToExpire,
+        isBlocked,
+        timeToBlockExpire: isBlocked ? timeToExpire : 0,
+      };
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          eventType: "throttler.unavailable",
+          result: "allowed",
+          error: error instanceof Error ? error.message : "unknown",
+        }),
+      );
+
+      return {
+        totalHits: 0,
+        timeToExpire: 0,
+        isBlocked: false,
+        timeToBlockExpire: 0,
+      };
     }
-
-    const fullKey = `security:gateway:throttler:${key}`;
-    const totalHits = await this.redis.incr(fullKey);
-
-    if (totalHits === 1) {
-      await this.redis.pexpire(fullKey, ttl);
-    }
-
-    const timeToExpire = Math.max(0, await this.redis.pttl(fullKey));
-    const isBlocked = totalHits > limit;
-
-    return {
-      totalHits,
-      timeToExpire,
-      isBlocked,
-      timeToBlockExpire: isBlocked ? timeToExpire : 0,
-    };
   }
 }

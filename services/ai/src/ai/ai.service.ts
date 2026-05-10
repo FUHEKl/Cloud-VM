@@ -45,8 +45,7 @@ export class AiService {
   ).toLowerCase();
   private readonly vmServiceUrl = process.env.VM_SERVICE_URL || "http://vm:3004";
   private readonly userServiceUrl = process.env.USER_SERVICE_URL || "http://user:3003";
-  private readonly actionConfirmSecret =
-    process.env.AI_ACTION_CONFIRM_SECRET || process.env.JWT_SECRET || "";
+  private readonly actionConfirmSecret = process.env.AI_ACTION_CONFIRM_SECRET || "";
   private readonly promptInjectionPatterns: RegExp[] = [
     /ignore\s+previous\s+instructions/i,
     /you\s+are\s+now/i,
@@ -268,19 +267,33 @@ export class AiService {
     }, user.userId);
 
     const internalToken = this.createInternalToken(user);
-    const response = await fetch(`${this.vmServiceUrl}/vms/${payload.vmId}/action`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${internalToken}`,
-      },
-      body: JSON.stringify({ action: payload.action }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.vmServiceUrl}/vms/${payload.vmId}/action`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${internalToken}`,
+        },
+        body: JSON.stringify({ action: payload.action }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      throw new ServiceUnavailableException("VM service is unavailable");
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const raw = await response.text().catch(() => "");
+      const sanitized = raw.replace(/[\r\n]+/g, " ").slice(0, 300);
       throw new BadRequestException(
-        `Failed to execute action '${payload.action}' for VM '${payload.vmName}': ${errorText}`,
+        `Failed to execute action '${payload.action}' for VM '${payload.vmName}'${
+          sanitized ? `: ${sanitized}` : ""
+        }`,
       );
     }
 
@@ -568,10 +581,20 @@ export class AiService {
   private sanitizeImages(images?: string[]): string[] {
     if (!images || images.length === 0) return [];
 
+    const maxBytes = Math.max(
+      1,
+      Number(process.env.AI_MAX_IMAGE_BYTES || "1048576"),
+    );
+
     return images
       .slice(0, 3)
       .map((item) => item.trim())
-      .filter((item) => item.startsWith("data:image/") && item.includes(";base64,"));
+      .filter((item) => {
+        if (!item.startsWith("data:image/") || !item.includes(";base64,")) return false;
+        const base64 = item.split(";base64,")[1] || "";
+        const approxBytes = Math.floor(base64.length * 0.75);
+        return approxBytes <= maxBytes;
+      });
   }
 
   private isOutOfScopeQuestion(message: string): boolean {
@@ -605,6 +628,11 @@ export class AiService {
   }
 
   private createInternalToken(user: CurrentUser): string {
+    const secret = process.env.JWT_SECRET || "";
+    if (!secret) {
+      throw new ServiceUnavailableException("Internal JWT secret is not configured");
+    }
+
     return this.jwtService.sign(
       {
         sub: user.userId,
@@ -612,7 +640,7 @@ export class AiService {
         role: user.role,
       },
       {
-        secret: process.env.JWT_SECRET || "",
+        secret,
         expiresIn: "5m",
       },
     );
@@ -697,6 +725,21 @@ export class AiService {
       fetch(`${this.vmServiceUrl}/vms?limit=5`, { headers }),
       fetch(`${this.userServiceUrl}/users/profile-summary`, { headers }),
     ]);
+
+    const settled = [statsRes, vmsRes, profileRes];
+    const labels = ["vm_stats", "vm_list", "user_profile"];
+    settled.forEach((result, idx) => {
+      if (result.status === "rejected") {
+        this.logger.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            eventType: "ai.context.fetch_failed",
+            target: labels[idx],
+            error: result.reason?.message || "unknown",
+          }),
+        );
+      }
+    });
 
     const vmStats = {
       total: 0,

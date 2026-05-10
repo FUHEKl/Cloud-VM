@@ -217,7 +217,9 @@ async function bootstrap() {
 
       return { allowed: true, ip };
     } catch (error) {
-      const failOpen = (process.env.WS_RATELIMIT_FAIL_BEHAVIOR || "open").toLowerCase() !== "closed";
+      const defaultBehavior = isProduction ? "closed" : "open";
+      const failOpen =
+        (process.env.WS_RATELIMIT_FAIL_BEHAVIOR || defaultBehavior).toLowerCase() !== "closed";
       console.warn(
         `WS rate-limit Redis unavailable, ${failOpen ? "allowing" : "blocking"} request (${(error as Error).message})`,
       );

@@ -95,44 +95,68 @@ export class RedisRateLimitMiddleware implements NestMiddleware {
       return;
     }
 
-    if (this.redis.status !== "ready") {
-      await this.redis.connect();
-    }
-
     const ip = this.getClientIp(req);
     const key = `security:gateway:ratelimit:${rule.name}:${ip}`;
 
-    const currentHits = await this.redis.incr(key);
-    if (currentHits === 1) {
-      await this.redis.expire(key, rule.windowSeconds);
-    }
+    try {
+      if (this.redis.status !== "ready") {
+        await this.redis.connect();
+      }
 
-    if (currentHits > rule.limit) {
-      const ttl = Math.max(1, await this.redis.ttl(key));
+      const currentHits = await this.redis.incr(key);
+      if (currentHits === 1) {
+        await this.redis.expire(key, rule.windowSeconds);
+      }
 
-      // SECURITY: explicit Retry-After header for bounded client backoff behavior.
-      res.setHeader("Retry-After", String(ttl));
+      if (currentHits > rule.limit) {
+        const ttl = Math.max(1, await this.redis.ttl(key));
 
-      // SECURITY: structured rate-limit audit log without sensitive payload data.
+        // SECURITY: explicit Retry-After header for bounded client backoff behavior.
+        res.setHeader("Retry-After", String(ttl));
+
+        // SECURITY: structured rate-limit audit log without sensitive payload data.
+        console.warn(
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            eventType: "rate_limit.hit",
+            ip,
+            method: req.method,
+            path: req.path,
+            result: "blocked",
+            limit: rule.limit,
+            windowSeconds: rule.windowSeconds,
+            retryAfterSeconds: ttl,
+          }),
+        );
+
+        res.status(429).json({
+          statusCode: 429,
+          message: "Too many requests. Please retry later.",
+        });
+        return;
+      }
+    } catch (error) {
+      const failOpen = (process.env.RATELIMIT_FAIL_BEHAVIOR || "open").toLowerCase() !== "closed";
+
       console.warn(
         JSON.stringify({
           timestamp: new Date().toISOString(),
-          eventType: "rate_limit.hit",
+          eventType: "rate_limit.unavailable",
           ip,
           method: req.method,
           path: req.path,
-          result: "blocked",
-          limit: rule.limit,
-          windowSeconds: rule.windowSeconds,
-          retryAfterSeconds: ttl,
+          result: failOpen ? "allowed" : "blocked",
+          error: error instanceof Error ? error.message : "unknown",
         }),
       );
 
-      res.status(429).json({
-        statusCode: 429,
-        message: "Too many requests. Please retry later.",
-      });
-      return;
+      if (!failOpen) {
+        res.status(503).json({
+          statusCode: 503,
+          message: "Rate limiter unavailable. Please retry later.",
+        });
+        return;
+      }
     }
 
     next();

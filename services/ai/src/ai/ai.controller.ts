@@ -91,8 +91,14 @@ export class AiController {
       res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
       res.end();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Streaming failed";
-      res.write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
+      console.warn(
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          eventType: "ai.stream.failed",
+          error: error instanceof Error ? error.message : "unknown",
+        }),
+      );
+      res.write(`data: ${JSON.stringify({ type: "error", message: "Streaming failed" })}\n\n`);
       res.end();
     }
   }
