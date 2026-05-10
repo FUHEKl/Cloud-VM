@@ -24,3 +24,6 @@ ONE_IP_OFFSET = int(os.getenv("ONE_IP_OFFSET", "0"))
 
 # Database
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/pfe")
+
+if "postgres:postgres" in DATABASE_URL:
+	raise RuntimeError("SECURITY: Default DATABASE_URL detected. Set a real DB URL.")

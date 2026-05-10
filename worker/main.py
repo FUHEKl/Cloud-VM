@@ -143,12 +143,22 @@ async def main():
 
     _validate_opennebula_config_or_exit()
 
-    nc = await nats.connect(NATS_URL)
+    try:
+        nc = await nats.connect(NATS_URL)
+    except Exception as exc:
+        logger.error("SECURITY: Failed to connect to NATS at %s: %s", NATS_URL, exc)
+        sys.exit(1)
+
     js = nc.jetstream()
     logger.info("Connected to NATS at %s", NATS_URL)
 
     redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-    redis_client.ping()
+    try:
+        redis_client.ping()
+    except Exception as exc:
+        logger.error("SECURITY: Redis connection failed: %s", exc)
+        sys.exit(1)
+
     logger.info("Connected to Redis at %s:%s", REDIS_HOST, REDIS_PORT)
 
     await ensure_stream(js)

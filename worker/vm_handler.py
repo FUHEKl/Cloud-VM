@@ -217,7 +217,12 @@ class VMHandler:
             logger.error(f"Error creating VM {vm_id}: {e}", exc_info=True)
             update_vm_status(vm_id, "ERROR")
             self._cache_vm_status(vm_id, "ERROR")
-            await self._publish_status(nats_client, vm_id, "ERROR", {"error": str(e)})
+            await self._publish_status(
+                nats_client,
+                vm_id,
+                "ERROR",
+                {"error": "VM provisioning failed. Contact support."},
+            )
 
     async def vm_action(self, data: dict, nats_client) -> None:
         vm_id     = data["vmId"]
@@ -254,7 +259,7 @@ class VMHandler:
             self._cache_vm_status(vm_id, "ERROR")
             await self._publish_status(nats_client, vm_id, "ERROR", {
                 "oneVmId": one_vm_id,
-                "error": str(e),
+                "error": "VM action failed. Please retry.",
             })
 
     async def delete_vm(self, data: dict, nats_client) -> None:
@@ -284,7 +289,7 @@ class VMHandler:
             self._cache_vm_status(vm_id, "ERROR")
             await self._publish_status(nats_client, vm_id, "ERROR", {
                 "oneVmId": one_vm_id,
-                "error": str(e),
+                "error": "VM deletion failed. Please retry.",
             })
 
     async def reconcile_pending_vms(self, nats_client) -> None:
