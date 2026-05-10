@@ -711,7 +711,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
         } else if (err.message.includes("Authentication") || err.message.includes("auth")) {
           userMessage = `SSH authentication failed at ${vm.sshHost}. The SSH key may not have been injected into the VM yet — wait a moment and try again.`;
         } else {
-          userMessage = `SSH error: ${err.message}`;
+          userMessage = "SSH connection error. Please retry or contact support.";
         }
 
         client.emit("error", { message: userMessage });

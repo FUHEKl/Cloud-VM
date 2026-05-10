@@ -7,6 +7,7 @@ import {
   Body,
   Query,
   UseGuards,
+  ParseUUIDPipe,
 } from "@nestjs/common";
 import { VmService } from "./vm.service";
 import { CreateVmDto } from "./dto/create-vm.dto";
@@ -55,7 +56,7 @@ export class VmController {
 
   @Get(":id")
   findOne(
-    @Param("id") id: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.vmService.getVm(id, user.userId, user.role);
@@ -63,7 +64,7 @@ export class VmController {
 
   @Get(":id/ssh-key")
   getSshPrivateKey(
-    @Param("id") id: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.vmService.getVmSshPrivateKey(id, user.userId, user.role);
@@ -71,7 +72,7 @@ export class VmController {
 
   @Post(":id/action")
   performAction(
-    @Param("id") id: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
     @Body() dto: VmActionDto,
     @CurrentUser() user: { userId: string; role: string },
   ) {
@@ -80,7 +81,7 @@ export class VmController {
 
   @Delete(":id")
   remove(
-    @Param("id") id: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
     @CurrentUser() user: { userId: string; role: string },
   ) {
     return this.vmService.deleteVm(id, user.userId, user.role);

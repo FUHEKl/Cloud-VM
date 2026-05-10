@@ -39,6 +39,7 @@ export class CreateVmDto {
 
   @IsOptional()
   @IsString()
+  @Matches(/^(student|pro|enterprise|unlimited)$/)
   planId?: string;
 
   @IsOptional()

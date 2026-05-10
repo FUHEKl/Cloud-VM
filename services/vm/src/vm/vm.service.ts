@@ -122,16 +122,40 @@ export class VmService {
     return token;
   }
 
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit,
+    errorMessage: string,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+
+      return response;
+    } catch (error) {
+      throw new InternalServerErrorException(errorMessage);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   private async fetchInternalQuotaSnapshot(userId: string): Promise<InternalQuotaSnapshot | null> {
     const url = `${this.getUserServiceUrl()}/users/internal/quota/${encodeURIComponent(userId)}`;
     const syncToken = this.getInterServiceSyncToken();
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        "x-sync-token": syncToken,
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: { "x-sync-token": syncToken },
       },
-    });
+      "Failed to load user quota snapshot",
+    );
 
     if (response.status === 404) {
       return null;
@@ -150,10 +174,14 @@ export class VmService {
     const url = `${this.getUserServiceUrl()}/users/internal/subscription-access/${encodeURIComponent(userId)}`;
     const syncToken = this.getInterServiceSyncToken();
 
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { "x-sync-token": syncToken },
-    });
+    const response = await this.fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: { "x-sync-token": syncToken },
+      },
+      "Failed to load subscription access snapshot",
+    );
 
     if (response.status === 404) {
       return null;
