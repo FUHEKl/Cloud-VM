@@ -94,8 +94,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.getHttpAdapter().getInstance().set("trust proxy", 1);
 
-  app.use(json({ limit: "1mb" }));
-  app.use(urlencoded({ extended: true, limit: "1mb" }));
+  app.use(json({ limit: "16kb" }));
+  app.use(urlencoded({ extended: true, limit: "16kb" }));
 
   app.use(
     // SECURITY: baseline hardening headers to reduce common browser attack surface.
@@ -187,3 +187,4 @@ async function bootstrap() {
 }
 
 bootstrap();
+

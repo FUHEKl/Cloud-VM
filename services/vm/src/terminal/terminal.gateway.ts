@@ -128,7 +128,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
   private readonly maxInputEventsPerSecond = 100;
   private readonly maxCommandBufferChars = 8192;
   private readonly dangerousInputMode: "block" | "audit" =
-    ((process.env.TERMINAL_DANGEROUS_INPUT_MODE || "block").trim().toLowerCase() === "audit"
+    ((process.env.TERMINAL_DANGEROUS_INPUT_MODE || "audit").trim().toLowerCase() === "audit"
       ? "audit"
       : "block");
   private readonly dangerousInputMaxViolations = Math.max(
@@ -937,3 +937,4 @@ export class TerminalGateway implements OnGatewayDisconnect {
     this.commandBuffers.delete(clientId);
   }
 }
+

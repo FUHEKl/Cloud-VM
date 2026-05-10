@@ -32,7 +32,7 @@ services:
   nats:
     image: nats:2-alpine
     restart: unless-stopped
-    command: ["--js", "--user", "${NATS_USER:-cloudvm_nats}", "--pass", "${NATS_PASSWORD:-change-this-nats-password}"]
+    command: ["--js", "--user", "${NATS_USER:-cloudvm_nats}", "--pass", "${NATS_PASSWORD}"]
 
   # ── Nginx reverse-proxy (HTTPS :443) ─────────────
   nginx:
@@ -178,7 +178,7 @@ services:
       - VM_SSH_KEY_SECRET=${VM_SSH_KEY_SECRET}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD:-change-this-nats-password}@nats:4222
+      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
       - REDIS_HOST=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
       - CORS_ORIGIN=${CORS_ORIGIN}
@@ -254,7 +254,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD:-change-this-nats-password}@nats:4222
+      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
       - REDIS_HOST=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
       - ONE_XMLRPC=${ONE_XMLRPC}

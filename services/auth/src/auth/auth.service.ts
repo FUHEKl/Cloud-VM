@@ -339,7 +339,6 @@ export class AuthService {
         body: JSON.stringify({
           id: user.id,
           email: user.email,
-          password: user.password,
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
