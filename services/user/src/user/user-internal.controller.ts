@@ -22,10 +22,7 @@ interface SyncUserPayload {
   role?: "USER" | "ADMIN";
   isActive?: boolean;
   mfaEnabled?: boolean;
-  mfaSecret?: string | null;
   mfaEnabledAt?: string | null;
-  mfaRecoveryCodeHashes?: string[];
-  mfaRecoveryCodesGeneratedAt?: string | null;
 }
 
 interface ActivateSubscriptionPayload {

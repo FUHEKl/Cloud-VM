@@ -246,10 +246,7 @@ export class UserService {
     role?: "USER" | "ADMIN";
     isActive?: boolean;
     mfaEnabled?: boolean;
-    mfaSecret?: string | null;
     mfaEnabledAt?: string | null;
-    mfaRecoveryCodeHashes?: string[];
-    mfaRecoveryCodesGeneratedAt?: string | null;
   }) {
     const role = payload.role === "ADMIN" ? "ADMIN" : "USER";
 
@@ -263,12 +260,7 @@ export class UserService {
         role,
         isActive: payload.isActive ?? true,
         mfaEnabled: payload.mfaEnabled ?? false,
-        mfaSecret: payload.mfaSecret ?? null,
         mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
-        mfaRecoveryCodeHashes: payload.mfaRecoveryCodeHashes ?? [],
-        mfaRecoveryCodesGeneratedAt: payload.mfaRecoveryCodesGeneratedAt
-          ? new Date(payload.mfaRecoveryCodesGeneratedAt)
-          : null,
       },
       create: {
         id: payload.id,
@@ -279,12 +271,7 @@ export class UserService {
         role,
         isActive: payload.isActive ?? true,
         mfaEnabled: payload.mfaEnabled ?? false,
-        mfaSecret: payload.mfaSecret ?? null,
         mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
-        mfaRecoveryCodeHashes: payload.mfaRecoveryCodeHashes ?? [],
-        mfaRecoveryCodesGeneratedAt: payload.mfaRecoveryCodesGeneratedAt
-          ? new Date(payload.mfaRecoveryCodesGeneratedAt)
-          : null,
       },
     });
 

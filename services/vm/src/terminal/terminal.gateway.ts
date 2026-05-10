@@ -41,11 +41,10 @@ function extractCookieValue(rawCookie: string | undefined, cookieName: string): 
 }
 
 function buildSocketFingerprint(client: Socket): string {
-  const ip =
-    (typeof client.handshake.headers["x-forwarded-for"] === "string"
-      ? client.handshake.headers["x-forwarded-for"].split(",")[0].trim()
-      : client.handshake.address || "unknown"
-    ).replace("::ffff:", "");
+  const ip = (client.conn?.remoteAddress || client.handshake.address || "unknown").replace(
+    "::ffff:",
+    "",
+  );
   const userAgent =
     (typeof client.handshake.headers["user-agent"] === "string"
       ? client.handshake.headers["user-agent"]
@@ -139,8 +138,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
   private readonly allowPasswordFallback = (() => {
     const configured = (process.env.TERMINAL_ALLOW_PASSWORD_FALLBACK || "").trim().toLowerCase();
     if (configured === "true") return true;
-    if (configured === "false") return false;
-    return (process.env.NODE_ENV || "development").toLowerCase() !== "production";
+    return false;
   })();
   private readonly sshConnectTimeoutMs = Math.max(
     5000,
@@ -168,6 +166,10 @@ export class TerminalGateway implements OnGatewayDisconnect {
     if (!process.env.JWT_SECRET) {
       this.logger.error("JWT_SECRET is required for terminal authentication");
       throw new Error("JWT_SECRET is required");
+    }
+
+    if (this.allowPasswordFallback && !(process.env.TERMINAL_DEFAULT_VM_PASSWORD || "").trim()) {
+      throw new Error("TERMINAL_DEFAULT_VM_PASSWORD is required when password fallback is enabled");
     }
   }
 
@@ -331,7 +333,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
       const normalizedPrivateKey = payload.privateKey
         ? normalizePrivateKeyForSsh(payload.privateKey, this.logger, `vm:${payload.vmId}`)
         : "";
-      const defaultVmPassword = (process.env.TERMINAL_DEFAULT_VM_PASSWORD || "cloudvm123").trim();
+      const defaultVmPassword = (process.env.TERMINAL_DEFAULT_VM_PASSWORD || "").trim();
       let connectTimeout: NodeJS.Timeout | null = null;
 
       const clearConnectTimeout = () => {
@@ -914,23 +916,8 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       const safePreview = normalized.slice(0, 120);
       this.logger.warn(
-        `SECURITY: dangerous terminal command detected mode=${this.dangerousInputMode} socket=${client.id} violations=${nextViolations} command=\"${safePreview}\"`,
+        `SECURITY: dangerous terminal command observed socket=${client.id} violations=${nextViolations} command=\"${safePreview}\"`,
       );
-
-      if (this.dangerousInputMode === "audit") {
-        continue;
-      }
-
-      this.telemetry.markInputRejected(client.id, "dangerous_terminal_pattern_blocked");
-      client.emit("error", {
-        message:
-          "Blocked potentially destructive command pattern. Repeated violations will disconnect this session.",
-      });
-
-      if (nextViolations >= this.dangerousInputMaxViolations) {
-        client.disconnect();
-      }
-      return false;
     }
 
     return true;

@@ -22,6 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-change-this-redis-password}"]
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -31,10 +32,7 @@ services:
   nats:
     image: nats:2-alpine
     restart: unless-stopped
-    ports:
-      - "4222:4222"
-      - "8222:8222"
-    command: ["--js"]
+    command: ["--js", "--user", "${NATS_USER:-cloudvm_nats}", "--pass", "${NATS_PASSWORD:-change-this-nats-password}"]
 
   # ── Nginx reverse-proxy (HTTPS :443) ─────────────
   nginx:
@@ -83,6 +81,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
       - CORS_ORIGIN=${CORS_ORIGIN}
     depends_on:
       - redis
@@ -133,6 +132,7 @@ services:
       - JWT_REFRESH_EXPIRES_IN=${JWT_REFRESH_EXPIRES_IN:-7d}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
     depends_on:
       postgres:
         condition: service_healthy
@@ -178,8 +178,9 @@ services:
       - VM_SSH_KEY_SECRET=${VM_SSH_KEY_SECRET}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - NATS_URL=nats://nats:4222
+      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD:-change-this-nats-password}@nats:4222
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
       - CORS_ORIGIN=${CORS_ORIGIN}
       - ONE_XMLRPC=${ONE_XMLRPC:-}
       - ONE_USERNAME=${ONE_USERNAME:-}
@@ -190,7 +191,7 @@ services:
       - TERMINAL_SSH_BASTION_PASSWORD=${TERMINAL_SSH_BASTION_PASSWORD:-}
       - TERMINAL_SSH_BASTION_PRIVATE_KEY=${TERMINAL_SSH_BASTION_PRIVATE_KEY:-}
       - TERMINAL_SSH_CONNECT_TIMEOUT_MS=${TERMINAL_SSH_CONNECT_TIMEOUT_MS:-20000}
-      - TERMINAL_DEFAULT_VM_PASSWORD=${TERMINAL_DEFAULT_VM_PASSWORD:-cloudvm123}
+      - TERMINAL_DEFAULT_VM_PASSWORD=${TERMINAL_DEFAULT_VM_PASSWORD:-}
       - USER_SERVICE_URL=${USER_SERVICE_URL:-http://user:3003}
       - INTER_SERVICE_SYNC_TOKEN=${INTER_SERVICE_SYNC_TOKEN}
     depends_on:
@@ -253,8 +254,9 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      - NATS_URL=nats://nats:4222
+      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD:-change-this-nats-password}@nats:4222
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-change-this-redis-password}
       - ONE_XMLRPC=${ONE_XMLRPC}
       - ONE_USERNAME=${ONE_USERNAME}
       - ONE_PASSWORD=${ONE_PASSWORD}

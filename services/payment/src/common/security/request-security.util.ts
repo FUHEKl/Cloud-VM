@@ -7,13 +7,6 @@ function normalizeIp(rawIp?: string): string {
 }
 
 export function getClientIp(req: Request): string {
-  const forwardedFor = req.headers["x-forwarded-for"];
-  if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
-    return normalizeIp(forwardedFor.split(",")[0]);
-  }
-  if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
-    return normalizeIp(forwardedFor[0]);
-  }
   return normalizeIp(req.ip || req.socket.remoteAddress || "unknown");
 }
 

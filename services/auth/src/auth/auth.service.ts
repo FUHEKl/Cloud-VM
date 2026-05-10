@@ -42,7 +42,6 @@ interface MfaChallengePayload {
   rememberMe: boolean;
   mode: "temporary" | "totp";
   code?: string;
-  secret?: string;
 }
 
 interface MfaPendingSetupPayload {
@@ -67,6 +66,8 @@ export interface MfaAuditEntry {
   metadata: unknown;
 }
 
+const DUMMY_BCRYPT_HASH = bcrypt.hashSync("__auth_login_dummy_password__", 10);
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -75,8 +76,9 @@ export class AuthService {
     process.env.REDIS_URL ||
       `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
     {
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      password: (process.env.REDIS_PASSWORD || "").trim() || undefined,
     },
   );
 
@@ -343,10 +345,7 @@ export class AuthService {
           role: user.role,
           isActive: user.isActive,
           mfaEnabled: user.mfaEnabled,
-          mfaSecret: user.mfaSecret,
           mfaEnabledAt: user.mfaEnabledAt,
-          mfaRecoveryCodeHashes: user.mfaRecoveryCodeHashes,
-          mfaRecoveryCodesGeneratedAt: user.mfaRecoveryCodesGeneratedAt,
         }),
         signal: controller.signal,
       });
@@ -663,6 +662,7 @@ export class AuthService {
     });
 
     if (!user) {
+      await bcrypt.compare(dto.password || "", DUMMY_BCRYPT_HASH);
       await this.registerFailedLogin(dto.email, req);
       throw new UnauthorizedException("Invalid credentials");
     }
@@ -722,7 +722,6 @@ export class AuthService {
         fingerprint: buildRequestFingerprint(req),
         rememberMe: dto.rememberMe === true,
         mode: "totp",
-        secret: userMfaSecret,
       };
 
       await this.redis.set(
@@ -861,6 +860,7 @@ export class AuthService {
         email: true,
         role: true,
         isActive: true,
+        mfaSecret: true,
         mfaRecoveryCodeHashes: true,
       },
     });
@@ -871,7 +871,8 @@ export class AuthService {
 
     let isValidCode = false;
     if (payload.mode === "totp") {
-      isValidCode = Boolean(payload.secret) && verifyTotpCode(payload.secret!, code, 1);
+      const mfaSecret = ((user as any).mfaSecret as string | null) || null;
+      isValidCode = Boolean(mfaSecret) && verifyTotpCode(mfaSecret!, code, 1);
 
       if (!isValidCode) {
         const consumed = await this.consumeRecoveryCode(payload.userId, code);

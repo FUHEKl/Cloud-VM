@@ -150,6 +150,9 @@ class VMHandler:
             return
 
         try:
+            if re.fullmatch(r"[a-zA-Z0-9-]{1,64}", name) is None:
+                raise ValueError("VM name contains invalid chars")
+
             template_id = await self._find_template(os_template)
             if template_id is None:
                 raise Exception(f"Template '{os_template}' not found in OpenNebula")
@@ -186,8 +189,9 @@ class VMHandler:
                 payload_ssh_key_count,
             )
 
+            escaped_name = _escape_one_template_value(name)
             extra_template = (
-                f'NAME="{name}"\n'
+                f'NAME="{escaped_name}"\n'
                 f"CPU={cpu}\n"
                 f"VCPU={cpu}\n"
                 f"MEMORY={ram_mb}\n"

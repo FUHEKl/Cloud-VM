@@ -41,6 +41,7 @@ export default function VmsListPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [listError, setListError] = useState("");
+  const [actionError, setActionError] = useState("");
 
   const loadVms = useCallback(async () => {
     try {
@@ -95,6 +96,7 @@ export default function VmsListPage() {
   const handleAction = async (vmId: string, action: VmAction) => {
     if (action === "delete" && !confirm("Delete this VM?")) return;
     try {
+      setActionError("");
       if (action === "delete") {
         await api.delete(`/vms/${vmId}`);
       } else {
@@ -102,7 +104,7 @@ export default function VmsListPage() {
       }
       await loadVms();
     } catch {
-      // silent
+      setActionError("Action failed. Please retry.");
     }
   };
 
@@ -157,6 +159,11 @@ export default function VmsListPage() {
       </div>
 
       {/* VMs Grid */}
+      {actionError && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm">
+          {actionError}
+        </div>
+      )}
       {listError && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm flex items-center justify-between">
           <span>{listError}</span>

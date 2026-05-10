@@ -28,7 +28,7 @@ export default function SshKeysPage() {
       const { data } = await api.get("/ssh-keys");
       setKeys(Array.isArray(data) ? data : []);
     } catch {
-      // silent
+      setError("Failed to load SSH keys.");
     } finally {
       setLoading(false);
     }

@@ -64,11 +64,6 @@ function parseSingleHeader(value: string | string[] | undefined): string | null 
 function extractClientIpFromHeaders(
   headers: Record<string, string | string[] | undefined>,
 ): string {
-  const forwardedFor = parseSingleHeader(headers["x-forwarded-for"]);
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0].trim().replace("::ffff:", "");
-  }
-
   const realIp = parseSingleHeader(headers["x-real-ip"]);
   if (realIp) {
     return realIp.replace("::ffff:", "");
@@ -143,6 +138,7 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
 
   // SECURITY: 12mb allows memory exhaustion attacks.
   app.use(json({ limit: "1mb" }));
@@ -188,6 +184,7 @@ async function bootstrap() {
     {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
+      password: (process.env.REDIS_PASSWORD || "").trim() || undefined,
     },
   );
 

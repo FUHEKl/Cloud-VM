@@ -5,8 +5,9 @@ export class RedisThrottlerStorage {
     process.env.REDIS_URL ||
       `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
     {
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      password: (process.env.REDIS_PASSWORD || "").trim() || undefined,
     },
   );
 

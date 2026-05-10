@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import api from "@/lib/api";
+import type { AxiosError } from "axios";
 import { getErrorMessage } from "@/lib/error";
 
 interface MfaSetupResponse {
@@ -102,7 +103,7 @@ export default function MfaSettingsPanel({
       ]);
       setStatus(statusData);
       setAudit(auditData || []);
-    } catch (err) {
+    } catch {
       setStatus(null);
       setAudit([]);
       setError("Unable to load MFA status.");
@@ -165,8 +166,15 @@ export default function MfaSettingsPanel({
       setCode("");
       setSetup(null);
     } catch (err) {
-      const text = getErrorMessage(err, "Failed to enable MFA.");
-      setError(text);
+      // Provide clearer guidance for common auth failures (session expiry/unauthorized)
+      const axiosErr = err as AxiosError | undefined;
+      if (axiosErr && axiosErr.response?.status === 401) {
+        setError("Session expired or unauthorized. Please sign in again and retry MFA setup.");
+        // Let the global interceptor try a refresh once; do not redirect here.
+      } else {
+        const text = getErrorMessage(err, "Failed to enable MFA.");
+        setError(text);
+      }
     } finally {
       setLoadingEnable(false);
       await loadStatus();

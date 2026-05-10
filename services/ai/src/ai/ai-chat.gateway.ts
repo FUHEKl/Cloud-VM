@@ -41,11 +41,10 @@ function extractCookieValue(rawCookie: string | undefined, cookieName: string): 
 }
 
 function buildSocketFingerprint(client: Socket): string {
-  const ip =
-    (typeof client.handshake.headers["x-forwarded-for"] === "string"
-      ? client.handshake.headers["x-forwarded-for"].split(",")[0].trim()
-      : client.handshake.address || "unknown"
-    ).replace("::ffff:", "");
+  const ip = (client.conn?.remoteAddress || client.handshake.address || "unknown").replace(
+    "::ffff:",
+    "",
+  );
   const userAgent =
     (typeof client.handshake.headers["user-agent"] === "string"
       ? client.handshake.headers["user-agent"]

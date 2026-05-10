@@ -11,7 +11,7 @@ from nats.js.api import ConsumerConfig, DeliverPolicy
 from nats.js.errors import NotFoundError
 import redis
 
-from config import NATS_URL, REDIS_HOST, REDIS_PORT, ONE_XMLRPC, ONE_USERNAME, ONE_PASSWORD
+from config import NATS_URL, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, ONE_XMLRPC, ONE_USERNAME, ONE_PASSWORD
 from vm_handler import VMHandler
 from db_updater import update_vm_status
 
@@ -48,6 +48,8 @@ def _validate_vm_create(data: dict) -> tuple[bool, str]:
         return False, "userId must be UUID"
     if not isinstance(data.get("name"), str) or not data["name"].strip():
         return False, "name must be non-empty string"
+    if re.fullmatch(r"[a-zA-Z0-9-]{1,64}", data["name"]) is None:
+        return False, "name contains invalid chars"
     if not isinstance(data.get("osTemplate"), str) or not data["osTemplate"].strip():
         return False, "osTemplate must be non-empty string"
 
@@ -152,7 +154,11 @@ async def main():
     js = nc.jetstream()
     logger.info("Connected to NATS at %s", NATS_URL)
 
-    redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    redis_kwargs = {"host": REDIS_HOST, "port": REDIS_PORT, "decode_responses": True}
+    if REDIS_PASSWORD:
+        redis_kwargs["password"] = REDIS_PASSWORD
+
+    redis_client = redis.Redis(**redis_kwargs)
     try:
         redis_client.ping()
     except Exception as exc:

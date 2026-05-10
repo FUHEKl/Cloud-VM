@@ -23,8 +23,8 @@ export function createJsonApiProxy({
     onProxyReq: (proxyReq, req) => {
       forwardParsedBody(proxyReq, req as Request);
     },
-    onError: (err, _req, res) => {
-      console.error(`${errorLabel} proxy error:`, err.message);
+    onError: (_err, _req, res) => {
+      console.error(`${errorLabel} proxy error`);
       (res as Response).status(502).json({
         statusCode: 502,
         message: unavailableMessage,

@@ -16,8 +16,9 @@ export class RedisRateLimitMiddleware implements NestMiddleware {
     process.env.REDIS_URL ||
       `redis://${process.env.REDIS_HOST || "localhost"}:${process.env.REDIS_PORT || "6379"}`,
     {
-    lazyConnect: true,
-    maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      password: (process.env.REDIS_PASSWORD || "").trim() || undefined,
     },
   );
 
@@ -61,13 +62,6 @@ export class RedisRateLimitMiddleware implements NestMiddleware {
   ];
 
   private getClientIp(req: Request): string {
-    const forwardedFor = req.headers["x-forwarded-for"];
-    if (typeof forwardedFor === "string" && forwardedFor.length > 0) {
-      return forwardedFor.split(",")[0].trim().replace("::ffff:", "");
-    }
-    if (Array.isArray(forwardedFor) && forwardedFor.length > 0) {
-      return forwardedFor[0].trim().replace("::ffff:", "");
-    }
     return (req.ip || req.socket.remoteAddress || "unknown").replace("::ffff:", "");
   }
 

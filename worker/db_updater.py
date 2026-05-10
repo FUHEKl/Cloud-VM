@@ -1,16 +1,36 @@
 import logging
-from urllib.parse import urlparse
+from contextlib import contextmanager
 
 import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
 
 from config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
 
+_POOL: ThreadedConnectionPool | None = None
 
-def _get_connection():
-    """Create a new database connection from DATABASE_URL."""
-    return psycopg2.connect(DATABASE_URL)
+
+def _get_pool() -> ThreadedConnectionPool:
+    global _POOL
+    if _POOL is None:
+        _POOL = ThreadedConnectionPool(minconn=1, maxconn=5, dsn=DATABASE_URL)
+    return _POOL
+
+
+@contextmanager
+def _connection_cursor():
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            yield conn, cur
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
 
 
 def update_vm_status(
@@ -58,46 +78,31 @@ def update_vm_status(
         WHERE id = %s
     """
 
-    conn = None
     try:
-        conn = _get_connection()
-        with conn.cursor() as cur:
+        with _connection_cursor() as (conn, cur):
             cur.execute(query, params)
-        conn.commit()
         logger.info(f"Updated VM {vm_id} status to {status}")
     except Exception as e:
         logger.error(f"Error updating VM {vm_id} in database: {e}", exc_info=True)
-        if conn:
-            conn.rollback()
         raise
-    finally:
-        if conn:
-            conn.close()
 
 
 def get_vm_one_id(vm_id: str) -> int | None:
     """Return the oneVmId for a VM, or None if not yet assigned."""
-    conn = None
     try:
-        conn = _get_connection()
-        with conn.cursor() as cur:
+        with _connection_cursor() as (conn, cur):
             cur.execute('SELECT "oneVmId" FROM virtual_machines WHERE id = %s', (vm_id,))
             row = cur.fetchone()
             return row[0] if row else None
     except Exception as e:
         logger.error(f"Error fetching oneVmId for VM {vm_id}: {e}")
         return None
-    finally:
-        if conn:
-            conn.close()
 
 
 def get_vms_pending_sync() -> list:
     """Return VMs in PENDING or ERROR state that already have a oneVmId (need IP polling resumed)."""
-    conn = None
     try:
-        conn = _get_connection()
-        with conn.cursor() as cur:
+        with _connection_cursor() as (conn, cur):
             cur.execute(
                 'SELECT id, "oneVmId" FROM virtual_machines '
                 "WHERE status IN ('PENDING', 'ERROR') AND \"oneVmId\" IS NOT NULL"
@@ -106,17 +111,12 @@ def get_vms_pending_sync() -> list:
     except Exception as e:
         logger.error(f"Error fetching pending VMs: {e}")
         return []
-    finally:
-        if conn:
-            conn.close()
 
 
 def get_user_ssh_keys(user_id: str) -> list:
     """Return all SSH public keys for a user."""
-    conn = None
     try:
-        conn = _get_connection()
-        with conn.cursor() as cur:
+        with _connection_cursor() as (conn, cur):
             cur.execute(
                 'SELECT "publicKey" FROM ssh_keys WHERE "userId" = %s',
                 (user_id,),
@@ -125,25 +125,14 @@ def get_user_ssh_keys(user_id: str) -> list:
     except Exception as e:
         logger.error(f"Error fetching SSH keys for user {user_id}: {e}")
         return []
-    finally:
-        if conn:
-            conn.close()
 
 
 def delete_vm_record(vm_id: str) -> None:
     """Hard delete a VM row from virtual_machines."""
-    conn = None
     try:
-        conn = _get_connection()
-        with conn.cursor() as cur:
+        with _connection_cursor() as (conn, cur):
             cur.execute('DELETE FROM virtual_machines WHERE id = %s', (vm_id,))
-        conn.commit()
         logger.info(f"Deleted VM {vm_id} from database")
     except Exception as e:
         logger.error(f"Error deleting VM {vm_id} from database: {e}", exc_info=True)
-        if conn:
-            conn.rollback()
         raise
-    finally:
-        if conn:
-            conn.close()

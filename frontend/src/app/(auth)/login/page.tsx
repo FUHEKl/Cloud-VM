@@ -6,6 +6,12 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/error";
 
+type ApiErrorLike = {
+  response?: {
+    status?: number;
+  };
+};
+
 export default function LoginPage() {
   const router = useRouter();
   const { login, verifyMfa } = useAuth();
@@ -37,7 +43,19 @@ export default function LoginPage() {
 
       router.replace("/dashboard/profile");
     } catch (err) {
-        setError(getErrorMessage(err, challengeId ? "Invalid MFA code" : "Invalid email or password"));
+      const status = (err as ApiErrorLike).response?.status;
+      const message = getErrorMessage(
+        err,
+        challengeId ? "Invalid MFA code" : "Invalid email or password",
+      );
+
+      if (challengeId && status === 429) {
+        setChallengeId("");
+        setMfaCode("");
+        setDevOtpHint("");
+      }
+
+      setError(message);
     } finally {
       setLoading(false);
     }

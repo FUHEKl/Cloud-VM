@@ -266,9 +266,8 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
         term.write(data);
       });
 
-      socket.on("error", (payload: string | { message: string }) => {
-        const msg = typeof payload === "object" ? payload.message : payload;
-        term.writeln(`\r\n\x1b[31m✗ Error: ${msg}\x1b[0m`);
+      socket.on("error", () => {
+        term.writeln("\r\n\x1b[31m✗ Error: Connection failed. Please retry.\x1b[0m");
         connectedRef.current = false;
       });
 

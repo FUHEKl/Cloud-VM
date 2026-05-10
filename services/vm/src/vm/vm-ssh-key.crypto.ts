@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "crypto";
 
 const ALGO = "aes-256-gcm";
 
@@ -8,7 +8,9 @@ function getEncryptionKey(): Buffer {
     throw new Error("Missing VM_SSH_KEY_SECRET");
   }
 
-  return createHash("sha256").update(secret, "utf8").digest();
+  const salt = Buffer.from("cloudvm-vm-ssh-key-salt", "utf8");
+  const info = Buffer.from("cloudvm-vm-ssh-key-encryption", "utf8");
+  return Buffer.from(hkdfSync("sha256", Buffer.from(secret, "utf8"), salt, info, 32));
 }
 
 export function encryptVmPrivateKey(plainTextPem: string): string {

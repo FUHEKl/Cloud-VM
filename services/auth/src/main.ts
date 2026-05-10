@@ -92,6 +92,7 @@ async function bootstrap() {
   validateJwtSecretsOrThrow();
 
   const app = await NestFactory.create(AppModule);
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
 
   app.use(json({ limit: "1mb" }));
   app.use(urlencoded({ extended: true, limit: "1mb" }));

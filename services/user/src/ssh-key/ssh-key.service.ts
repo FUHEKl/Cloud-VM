@@ -72,10 +72,8 @@ export class SshKeyService {
       }
 
       const keyData = Buffer.from(parts[1], "base64");
-      const hash = crypto.createHash("md5").update(keyData).digest("hex");
-
-      // Format as colon-separated hex pairs
-      return hash.match(/.{2}/g)!.join(":");
+      const hash = crypto.createHash("sha256").update(keyData).digest("base64");
+      return `SHA256:${hash.replace(/=+$/g, "")}`;
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;

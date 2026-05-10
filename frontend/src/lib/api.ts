@@ -24,6 +24,18 @@ api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config;
+
+    const requestUrl = String(original?.url || "");
+    const isAuthFlowRequest =
+      requestUrl.includes("/auth/login") ||
+      requestUrl.includes("/auth/mfa/verify") ||
+      requestUrl.includes("/auth/register");
+
+    // MFA/login failures should stay on the auth screen and show the backend error.
+    if (isAuthFlowRequest) {
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
       try {
