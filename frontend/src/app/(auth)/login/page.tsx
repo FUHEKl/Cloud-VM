@@ -37,7 +37,7 @@ export default function LoginPage() {
 
       router.replace("/dashboard/profile");
     } catch (err) {
-      setError(getErrorMessage(err, "Invalid email or password"));
+        setError(getErrorMessage(err, challengeId ? "Invalid MFA code" : "Invalid email or password"));
     } finally {
       setLoading(false);
     }

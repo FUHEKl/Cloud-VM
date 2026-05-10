@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import api from "@/lib/api";
+import { getErrorMessage } from "@/lib/error";
 
 interface MfaSetupResponse {
   mfaEnabled: boolean;
@@ -101,9 +102,10 @@ export default function MfaSettingsPanel({
       ]);
       setStatus(statusData);
       setAudit(auditData || []);
-    } catch {
+    } catch (err) {
       setStatus(null);
       setAudit([]);
+      setError("Unable to load MFA status.");
     } finally {
       setLoadingStatus(false);
     }
@@ -138,7 +140,7 @@ export default function MfaSettingsPanel({
           : "Scan the QR code in your authenticator app, then enter the 6-digit code.",
       );
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to start MFA setup.";
+      const text = getErrorMessage(err, "Failed to start MFA setup.");
       setError(text);
     } finally {
       setLoadingSetup(false);
@@ -163,7 +165,7 @@ export default function MfaSettingsPanel({
       setCode("");
       setSetup(null);
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to enable MFA.";
+      const text = getErrorMessage(err, "Failed to enable MFA.");
       setError(text);
     } finally {
       setLoadingEnable(false);
@@ -188,7 +190,7 @@ export default function MfaSettingsPanel({
       setRecoveryCodes([]);
       setMessage("MFA disabled. You can re-enable it any time.");
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to disable MFA.";
+      const text = getErrorMessage(err, "Failed to disable MFA.");
       setError(text);
     } finally {
       setLoadingDisable(false);
@@ -214,7 +216,7 @@ export default function MfaSettingsPanel({
       setRecoveryCodes(data.recoveryCodes || []);
       setMessage("New recovery codes generated. Save them now; they are shown only once.");
     } catch (err) {
-      const text = err instanceof Error ? err.message : "Failed to regenerate recovery codes.";
+      const text = getErrorMessage(err, "Failed to regenerate recovery codes.");
       setError(text);
     } finally {
       setLoadingRegenCodes(false);
