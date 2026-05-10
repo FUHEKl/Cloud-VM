@@ -17,13 +17,18 @@ interface JwtPayload {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, "jwt") {
   constructor() {
+    const jwtSecret = (process.env.JWT_SECRET || "").trim();
+    if (!jwtSecret || jwtSecret.length < 64) {
+      throw new Error("JWT_SECRET is missing or too weak for user service");
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         ExtractJwt.fromAuthHeaderAsBearerToken(),
         (req: Request) => parseCookie(req, "accessToken") || null,
       ]),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET || "",
+      secretOrKey: jwtSecret,
       passReqToCallback: true,
     });
   }

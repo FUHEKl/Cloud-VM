@@ -178,7 +178,7 @@ export class UserService {
     }
 
     // Generate a 6-digit code, hash it for storage
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const code = crypto.randomInt(100000, 1_000_000).toString();
     const codeHash = crypto.createHash("sha256").update(code).digest("hex");
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 

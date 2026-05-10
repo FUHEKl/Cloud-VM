@@ -16,6 +16,7 @@ import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 import { AdminUpdateUserDto } from "./dto/admin-update-user.dto";
 import { AdminSetSubscriptionDto } from "./dto/admin-set-subscription.dto";
+import { ConfirmStudentVerificationDto } from "./dto/confirm-student-verification.dto";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { Roles } from "../common/decorators/roles.decorator";
@@ -71,9 +72,9 @@ export class UserController {
   @Post("student-verification/confirm")
   confirmStudentVerification(
     @CurrentUser() user: any,
-    @Body() body: { code: string },
+    @Body() dto: ConfirmStudentVerificationDto,
   ) {
-    return this.userService.confirmStudentEmailVerification(user.userId, body.code);
+    return this.userService.confirmStudentEmailVerification(user.userId, dto.code);
   }
 
   @Get("stats")

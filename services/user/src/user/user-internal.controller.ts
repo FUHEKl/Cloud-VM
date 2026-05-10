@@ -10,6 +10,7 @@ import {
   Param,
   Post,
 } from "@nestjs/common";
+import { timingSafeEqual } from "crypto";
 import { UserService } from "./user.service";
 
 interface SyncUserPayload {
@@ -39,7 +40,17 @@ export class UserInternalController {
   private assertSyncToken(syncToken: string | undefined) {
     const expected = (process.env.INTER_SERVICE_SYNC_TOKEN || "").trim();
 
-    if (!expected || !syncToken || syncToken !== expected) {
+    if (!expected || !syncToken) {
+      throw new UnauthorizedException("Invalid sync token");
+    }
+
+    const expectedBuf = Buffer.from(expected);
+    const providedBuf = Buffer.from(syncToken);
+
+    if (
+      expectedBuf.length !== providedBuf.length ||
+      !timingSafeEqual(expectedBuf, providedBuf)
+    ) {
       throw new UnauthorizedException("Invalid sync token");
     }
   }
