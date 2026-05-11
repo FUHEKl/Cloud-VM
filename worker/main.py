@@ -173,6 +173,17 @@ async def main():
     await handler.load_templates()
     await handler.reconcile_pending_vms(nc)
 
+    async def _opennebula_reconnect_loop() -> None:
+        while True:
+            await asyncio.sleep(30)
+            if handler._template_cache is None:
+                logger.info("OpenNebula unreachable — retrying connection...")
+                await handler.load_templates()
+                if handler._template_cache is not None:
+                    logger.info("OpenNebula reconnected successfully.")
+
+    asyncio.create_task(_opennebula_reconnect_loop())
+
     # ---------------------------------------------------------------
     # EPHEMERAL consumers with DeliverPolicy.NEW
     # Every restart = fresh start, no stale messages replayed.

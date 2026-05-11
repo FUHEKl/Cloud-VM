@@ -50,7 +50,9 @@ api.interceptors.response.use(
         return api(original);
       } catch {
         clearAuthCookies();
-        window.location.href = "/login";
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("auth:logout"));
+        }
         return Promise.reject(error);
       }
     }

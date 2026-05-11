@@ -23,6 +23,7 @@ interface AuthState {
     lastName: string;
   }) => Promise<void>;
   logout: () => Promise<void>;
+  forceLogout: () => void;
   fetchUser: () => Promise<void>;
 }
 
@@ -77,13 +78,23 @@ export const useAuth = create<AuthState>((set) => ({
     set({ user: null, isAuthenticated: false, isLoading: false });
   },
 
+  forceLogout: () => {
+    clearAuthCookies();
+    set({ user: null, isAuthenticated: false, isLoading: false });
+  },
+
   fetchUser: async () => {
     try {
       const { data } = await api.get("/auth/me");
       set({ user: data, isAuthenticated: true, isLoading: false });
-    } catch {
-      clearAuthCookies();
-      set({ user: null, isAuthenticated: false, isLoading: false });
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } }).response?.status;
+      if (status === 401) {
+        clearAuthCookies();
+        set({ user: null, isAuthenticated: false, isLoading: false });
+      } else {
+        set({ isLoading: false });
+      }
     }
   },
 }));

@@ -167,18 +167,23 @@ export default function DashboardLayout({
   const profileRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAssistantRoute = pathname?.startsWith("/dashboard/assistant");
 
-  const loadProfileDetails = useCallback(async () => {
+  const loadProfileDetails = useCallback(async (signal?: AbortSignal) => {
     try {
-      const { data } = await api.get<UserProfileDetails>("/users/profile-summary");
+      const { data } = await api.get<UserProfileDetails>("/users/profile-summary", {
+        signal,
+      });
       setProfileDetails(data);
-    } catch {
+    } catch (err: unknown) {
+      if ((err as { code?: string }).code === "ERR_CANCELED") return;
       // optional widget data
     }
   }, []);
 
   useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
+    if (!user) {
+      fetchUser();
+    }
+  }, [fetchUser, user]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -204,7 +209,9 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    void loadProfileDetails();
+    const controller = new AbortController();
+    void loadProfileDetails(controller.signal);
+    return () => controller.abort();
   }, [isAuthenticated, loadProfileDetails]);
 
   useVmSocket((data) => {
