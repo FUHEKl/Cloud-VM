@@ -9,7 +9,7 @@ import pyone
 import redis as redis_lib
 
 from config import ONE_XMLRPC, ONE_USERNAME, ONE_PASSWORD, ONE_IP_OFFSET
-from db_updater import update_vm_status, get_vm_one_id, get_user_ssh_keys, delete_vm_record
+from db_updater import update_vm_status, get_vm_one_id, delete_vm_record
 
 logger = logging.getLogger(__name__)
 
@@ -18,83 +18,6 @@ def _escape_one_template_value(value: str) -> str:
     """Escape a value so it can be safely embedded inside OpenNebula template quotes."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
-
-def _load_extra_ssh_keys() -> list[str]:
-    """
-    Load extra SSH public keys from a file mounted into the container.
-
-    The file is written by scripts/setup-https.sh from the server's
-    /root/.ssh/id_rsa.pub so that the OpenNebula/Jetstream host key is
-    automatically injected into every new VM's authorized_keys.
-
-    Returns an empty list if the file is absent or empty.
-    """
-    path = os.getenv("EXTRA_SSH_KEYS_FILE", "/app/extra_ssh_keys.txt")
-    try:
-        with open(path) as fh:
-            keys = [line.strip() for line in fh if line.strip()]
-        if keys:
-            logger.info("Loaded %d extra SSH key(s) from %s", len(keys), path)
-        return keys
-    except FileNotFoundError:
-        logger.debug("Extra SSH keys file not found at %s — skipping", path)
-        return []
-    except Exception as exc:
-        logger.warning("Could not read extra SSH keys from %s: %s", path, exc)
-        return []
-
-
-def _inject_extra_ssh_keys_enabled() -> bool:
-    """
-    SECURITY: extra host-level SSH keys are disabled by default to preserve
-    per-user access isolation between VMs.
-
-    Set INJECT_EXTRA_SSH_KEYS=true to opt in explicitly.
-    """
-    raw = os.getenv("INJECT_EXTRA_SSH_KEYS", "false").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _sanitize_ssh_public_keys(keys: list[str]) -> list[str]:
-    """
-    SECURITY: normalize/validate SSH keys before template injection.
-    - Trim trailing spaces/newlines
-    - Allow only known public key prefixes
-    - Reject overly long keys
-    - Deduplicate while preserving order
-    """
-    allowed_prefixes = (
-        "ssh-rsa",
-        "ssh-ed25519",
-        "ecdsa-sha2-nistp256",
-    )
-
-    sanitized: list[str] = []
-    seen: set[str] = set()
-
-    for raw in keys:
-        if not isinstance(raw, str):
-            continue
-
-        key = raw.strip()
-        if not key:
-            continue
-
-        if len(key) > 4096:
-            logger.warning("SECURITY: rejected SSH key over max length (4096)")
-            continue
-
-        if not key.startswith(allowed_prefixes):
-            logger.warning("SECURITY: rejected SSH key with unsupported prefix")
-            continue
-
-        if key in seen:
-            continue
-
-        sanitized.append(key)
-        seen.add(key)
-
-    return sanitized
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +63,8 @@ class VMHandler:
         disk_gb   = data["diskGb"]
         os_template = data["osTemplate"]
         user_id   = data.get("userId")
-        generated_ssh_public_key = data.get("sshPublicKey")
+        vm_username = data.get("vmUsername", "cloudvm")
+        vm_password_b64 = data.get("vmPasswordB64", "")
 
         # Idempotency: if already instantiated, just resume IP polling
         existing_one_id = get_vm_one_id(vm_id)
@@ -157,54 +81,19 @@ class VMHandler:
             if template_id is None:
                 raise Exception(f"Template '{os_template}' not found in OpenNebula")
 
-            ssh_keys: list[str] = []
-
-            # SECURITY: host-level keys are opt-in only. Enabling this makes
-            # every VM trust the same key, which weakens tenant isolation.
-            if _inject_extra_ssh_keys_enabled():
-                extra_keys = _load_extra_ssh_keys()
-                if extra_keys:
-                    ssh_keys.extend(extra_keys)
-
-            db_ssh_key_count = 0
-            if user_id:
-                keys = get_user_ssh_keys(user_id)
-                if keys:
-                    ssh_keys.extend(keys)
-                    db_ssh_key_count = len(keys)
-
-            payload_ssh_key_count = 0
-            if isinstance(generated_ssh_public_key, str) and generated_ssh_public_key.strip():
-                ssh_keys.append(generated_ssh_public_key.strip())
-                payload_ssh_key_count = 1
-
-            ssh_keys = _sanitize_ssh_public_keys(ssh_keys)
-            ssh_keys_str = "\n".join(ssh_keys)
-
-            logger.info(
-                "VM %s SSH keys prepared (total=%s, fromDb=%s, fromPayload=%s)",
-                vm_id,
-                len(ssh_keys),
-                db_ssh_key_count,
-                payload_ssh_key_count,
-            )
+            if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_-]{2,31}", vm_username):
+                raise ValueError(f"Invalid vmUsername: {vm_username}")
+            if not vm_password_b64:
+                raise ValueError("vmPasswordB64 is required")
 
             escaped_name = _escape_one_template_value(name)
             extra_template = (
                 f'NAME="{escaped_name}"\n'
                 f"CPU={cpu}\n"
-                f"VCPU={cpu}\n"
                 f"MEMORY={ram_mb}\n"
+                f'VM_USERNAME="{_escape_one_template_value(vm_username)}"\n'
+                f'VM_PASSWORD_B64="{_escape_one_template_value(vm_password_b64)}"\n'
             )
-            if ssh_keys_str:
-                # Inject key(s) as a per-VM template attribute and let template
-                # CONTEXT map it via SSH_PUBLIC_KEY="$SSH_PUBLIC_KEY".
-                #
-                # We encode newlines as literal \n to keep this attribute
-                # single-line and parse-safe in OpenNebula template text.
-                keys_for_template = ssh_keys_str.replace("\r", "").replace("\n", "\\n")
-                escaped_ssh_keys = _escape_one_template_value(keys_for_template)
-                extra_template += f'SSH_PUBLIC_KEY="{escaped_ssh_keys}"\n'
 
             one_vm_id = await asyncio.to_thread(
                 self.one.template.instantiate, template_id, name, False, extra_template

@@ -4,15 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
-import {
-  downloadPrivateKeyAsPem,
-  getUserGeneratedSshPrivateKey,
-  hasDownloadedGeneratedSshPrivateKey,
-  markGeneratedSshPrivateKeyDownloaded,
-  saveGeneratedVmSshPrivateKey,
-  saveUserGeneratedSshPrivateKey,
-} from "@/lib/vmSshKeyStore";
-import type { GeneratedSshKeyResponse, Plan, SshKey } from "@/types";
+import type { Plan } from "@/types";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Create VM page
@@ -20,12 +12,6 @@ import type { GeneratedSshKeyResponse, Plan, SshKey } from "@/types";
 export default function CreateVmPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [sshKeys, setSshKeys] = useState<SshKey[]>([]);
-  const [sshKeysLoading, setSshKeysLoading] = useState(true);
-  const [sshMode, setSshMode] = useState<"existing" | "generate-new">(
-    "generate-new",
-  );
-  const [selectedSshKeyId, setSelectedSshKeyId] = useState("");
   const [osTemplates, setOsTemplates] = useState<
     { id: number; name: string }[]
   >([]);
@@ -39,30 +25,12 @@ export default function CreateVmPage() {
     planId: "",
   });
   const [useCustom, setUseCustom] = useState(false);
+  const [vmUsername, setVmUsername] = useState("cloudvm");
+  const [vmPassword, setVmPassword] = useState("");
+  const [vmPasswordConfirm, setVmPasswordConfirm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
-  const loadSshKeys = async () => {
-    try {
-      const { data } = await api.get("/ssh-keys");
-      const list = Array.isArray(data) ? data : [];
-      setSshKeys(list);
-      if (list.length > 0) {
-        setSshMode("existing");
-        setSelectedSshKeyId((prev) => prev || list[0].id);
-      } else {
-        setSshMode("generate-new");
-        setSelectedSshKeyId("");
-      }
-    } catch {
-      setSshKeys([]);
-      setSshMode("generate-new");
-      setSelectedSshKeyId("");
-    } finally {
-      setSshKeysLoading(false);
-    }
-  };
 
   useEffect(() => {
     api
@@ -89,12 +57,7 @@ export default function CreateVmPage() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    loadSshKeys();
-  }, []);
-
   const selectedPlan = plans.find((p) => p.id === form.planId);
-  const selectedSshKey = sshKeys.find((key) => key.id === selectedSshKeyId);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,39 +65,10 @@ export default function CreateVmPage() {
     setSuccess("");
     setLoading(true);
     try {
-      let selectedPublicKey = "";
-      let selectedPrivateKey: string | null = null;
-
-      if (sshMode === "existing" && selectedSshKey) {
-        selectedPublicKey = selectedSshKey.publicKey;
-        selectedPrivateKey = getUserGeneratedSshPrivateKey(selectedSshKey.id);
-      } else {
-        const generatedName = form.name?.trim()
-          ? `${form.name}-key`
-          : `vm-key-${new Date().toISOString().slice(0, 10)}`;
-
-        const { data } = await api.post<GeneratedSshKeyResponse>(
-          "/ssh-keys/generate",
-          { name: generatedName },
-        );
-
-        if (!data?.key?.id || !data?.key?.publicKey || !data?.privateKey) {
-          throw new Error("Generated SSH key response is incomplete");
-        }
-
-        selectedPublicKey = data.key.publicKey;
-        selectedPrivateKey = data.privateKey;
-
-        saveUserGeneratedSshPrivateKey(data.key.id, data.privateKey, data.filename);
-
-        if (!hasDownloadedGeneratedSshPrivateKey(data.key.id) && data.filename) {
-          downloadPrivateKeyAsPem(data.filename, data.privateKey);
-          markGeneratedSshPrivateKeyDownloaded(data.key.id);
-        }
-      }
-
-      if (!selectedPublicKey) {
-        throw new Error("Please select or generate an SSH key");
+      if (vmPassword !== vmPasswordConfirm) {
+        setError("Passwords do not match");
+        setLoading(false);
+        return;
       }
 
       const body = useCustom
@@ -144,7 +78,8 @@ export default function CreateVmPage() {
             cpu: form.cpu,
             ramMb: form.ramMb,
             diskGb: form.diskGb,
-            sshPublicKey: selectedPublicKey,
+            vmUsername,
+            vmPassword,
           }
         : {
             name: form.name,
@@ -153,14 +88,11 @@ export default function CreateVmPage() {
             cpu: selectedPlan?.cpu || 1,
             ramMb: selectedPlan?.ramMb || 1024,
             diskGb: selectedPlan?.diskGb || 10,
-            sshPublicKey: selectedPublicKey,
+            vmUsername,
+            vmPassword,
           };
 
-      const { data: createdVm } = await api.post("/vms", body);
-
-      if (createdVm?.id && selectedPrivateKey) {
-        saveGeneratedVmSshPrivateKey(createdVm.id, selectedPrivateKey);
-      }
+      await api.post("/vms", body);
 
       setSuccess("VM created successfully. Redirecting...");
       router.push("/dashboard/vms");
@@ -380,72 +312,60 @@ export default function CreateVmPage() {
             )}
           </div>
 
-          {/* SSH Key Access */}
+          {/* VM Credentials */}
           <div className="cyber-card">
-            <h3 className="text-lg font-semibold text-cyber-text mb-4">
-              SSH Access Key
-            </h3>
+            <h3 className="text-lg font-semibold mb-4">VM Login Credentials</h3>
+            <p className="text-sm text-cyber-text-dim mb-4">
+              These credentials will be used to access your VM via the web terminal.
+              Store the password securely — it cannot be retrieved later.
+            </p>
 
-            {sshKeysLoading ? (
-              <p className="text-sm text-cyber-text-dim">Loading SSH keys...</p>
-            ) : (
-              <div className="space-y-4">
-                {sshKeys.length > 0 && (
-                  <label className="flex items-center gap-2 text-sm text-cyber-text cursor-pointer">
-                    <input
-                      type="radio"
-                      name="ssh-mode"
-                      checked={sshMode === "existing"}
-                      onChange={() => setSshMode("existing")}
-                      className="accent-cyber-green"
-                    />
-                    Use an existing SSH key
-                  </label>
-                )}
+            <div className="mb-4">
+              <label className="block text-sm mb-1">Username</label>
+              <input
+                type="text"
+                value={vmUsername}
+                onChange={(e) => setVmUsername(e.target.value)}
+                className="cyber-input w-full"
+                placeholder="cloudvm"
+                minLength={3}
+                maxLength={32}
+                pattern="^[a-zA-Z_][a-zA-Z0-9_-]{2,31}$"
+                required
+              />
+              <p className="text-xs text-cyber-text-dim mt-1">
+                Letters, numbers, underscore, hyphen. Must start with a letter.
+              </p>
+            </div>
 
-                {sshMode === "existing" && sshKeys.length > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
-                      Select key
-                    </label>
-                    <select
-                      className="cyber-input"
-                      value={selectedSshKeyId}
-                      onChange={(e) => setSelectedSshKeyId(e.target.value)}
-                      required
-                    >
-                      {sshKeys.map((key) => (
-                        <option key={key.id} value={key.id}>
-                          {key.name} ({key.fingerprint})
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-xs text-cyber-text-dim mt-2">
-                      This key will be used for VM access. No new private key download
-                      is triggered for existing keys.
-                    </p>
-                  </div>
-                )}
+            <div className="mb-4">
+              <label className="block text-sm mb-1">Password</label>
+              <input
+                type="password"
+                value={vmPassword}
+                onChange={(e) => setVmPassword(e.target.value)}
+                className="cyber-input w-full"
+                minLength={8}
+                maxLength={64}
+                required
+              />
+            </div>
 
-                <label className="flex items-center gap-2 text-sm text-cyber-text cursor-pointer">
-                  <input
-                    type="radio"
-                    name="ssh-mode"
-                    checked={sshMode === "generate-new"}
-                    onChange={() => setSshMode("generate-new")}
-                    className="accent-cyber-green"
-                  />
-                  Generate a new SSH key now (recommended if none exists)
-                </label>
-
-                {sshMode === "generate-new" && (
-                  <p className="text-xs text-cyber-text-dim">
-                    A new key will be generated automatically before VM creation,
-                    added to your SSH Keys page, and its private key will download once.
-                  </p>
-                )}
-              </div>
-            )}
+            <div className="mb-2">
+              <label className="block text-sm mb-1">Confirm Password</label>
+              <input
+                type="password"
+                value={vmPasswordConfirm}
+                onChange={(e) => setVmPasswordConfirm(e.target.value)}
+                className="cyber-input w-full"
+                minLength={8}
+                maxLength={64}
+                required
+              />
+              <p className="text-xs text-cyber-text-dim mt-1">
+                Min 8 chars · uppercase · lowercase · number · no spaces
+              </p>
+            </div>
           </div>
 
           {/* Submit */}
