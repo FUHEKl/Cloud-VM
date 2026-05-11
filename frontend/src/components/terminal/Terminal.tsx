@@ -17,7 +17,7 @@ interface TerminalProps {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Password prompt overlay — shown when no generated SSH private key is found
-// in localStorage (cleared browser data, different device, etc.).
+// in the in-memory cache (page reloads or different device).
 // ──────────────────────────────────────────────────────────────────────────────
 function PasswordPrompt({
   ipAddress,

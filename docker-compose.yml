@@ -7,8 +7,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-cloudvm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cloudvm_secret}
       POSTGRES_DB: ${POSTGRES_DB:-cloudvm}
-    ports:
-      - "5434:5432"
+    expose:
+      - "5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/postgres/init-microservice-databases.sql:/docker-entrypoint-initdb.d/01-init-microservice-databases.sql:ro
@@ -53,7 +53,11 @@ services:
       if [ ! -f /etc/nginx/ssl/server.crt ] || [ ! -f /etc/nginx/ssl/server.key ]; then
         echo '[nginx] Generating local self-signed certificate for HTTPS...';
         mkdir -p /etc/nginx/ssl;
-        openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt -subj '/CN=localhost';
+        openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+          -keyout /etc/nginx/ssl/server.key \
+          -out /etc/nginx/ssl/server.crt \
+          -subj '/CN=localhost' \
+          -addext "subjectAltName=DNS:localhost,IP:127.0.0.1";
       fi;
       nginx -g 'daemon off;'
       "
@@ -67,8 +71,6 @@ services:
       context: ./services/gateway
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "3001:3001"
     expose:
       - "3001"
     environment:
@@ -281,8 +283,6 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_VM_WS_URL: ${NEXT_PUBLIC_VM_WS_URL}
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     expose:
       - "3000"
     environment:

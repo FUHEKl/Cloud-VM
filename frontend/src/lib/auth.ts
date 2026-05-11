@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import api from "./api";
 import { clearAuthCookies, setAuthCookies } from "./session";
+import { clearCachedSshPrivateKeys } from "./vmSshKeyStore";
 import type { User } from "@/types";
 
 interface AuthState {
@@ -75,11 +76,13 @@ export const useAuth = create<AuthState>((set) => ({
       // silent
     }
     clearAuthCookies();
+    clearCachedSshPrivateKeys();
     set({ user: null, isAuthenticated: false, isLoading: false });
   },
 
   forceLogout: () => {
     clearAuthCookies();
+    clearCachedSshPrivateKeys();
     set({ user: null, isAuthenticated: false, isLoading: false });
   },
 
