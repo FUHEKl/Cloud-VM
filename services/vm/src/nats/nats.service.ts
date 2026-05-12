@@ -33,19 +33,12 @@ export class NatsService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    // Strip any embedded credentials from the URL — use user/pass options instead
-    const rawUrl = process.env.NATS_URL || "nats://localhost:4222";
-    const natsUrl = rawUrl.replace(/\/\/[^@]+@/, "//");
-    const natsUser = process.env.NATS_USER;
-    const natsPass = process.env.NATS_PASSWORD;
+    const natsUrl = process.env.NATS_URL || "nats://localhost:4222";
     let retries = 12;
     while (retries-- > 0) {
       try {
-        this.connection = await connect({
-          servers: natsUrl,
-          ...(natsUser ? { user: natsUser } : {}),
-          ...(natsPass ? { pass: natsPass } : {}),
-        });
+        const connectionOptions = this.buildConnectionOptions(natsUrl);
+        this.connection = await connect(connectionOptions);
         this.js = this.connection.jetstream();
         this.logger.log(`Connected to NATS at ${natsUrl}`);
         await this.ensureStream();
@@ -57,6 +50,18 @@ export class NatsService implements OnModuleInit {
       }
     }
     this.logger.error("Failed to connect to NATS after retries");
+  }
+
+  private buildConnectionOptions(natsUrl: string) {
+    const emptyPasswordMatch = natsUrl.match(/^nats:\/\/([^:@/]+):@(.+)$/);
+    if (emptyPasswordMatch) {
+      const [, user, host] = emptyPasswordMatch;
+      this.logger.warn(
+        "NATS URL includes an empty password; using explicit user/pass options",
+      );
+      return { servers: `nats://${host}`, user, pass: "" };
+    }
+    return { servers: natsUrl };
   }
 
   private async ensureStream(): Promise<void> {

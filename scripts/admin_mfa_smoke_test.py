@@ -24,8 +24,6 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-import urllib.parse
-import os
 
 
 def call(
@@ -72,21 +70,6 @@ def totp_code(secret: str, for_unix_time: int | None = None) -> str:
         | (digest[offset + 3] & 0xFF)
     )
     return str(binary % 1_000_000).zfill(6)
-
-
-def resolve_auth_db_name() -> str:
-    explicit = os.getenv("AUTH_DB_NAME")
-    if explicit:
-        return explicit
-
-    url = os.getenv("AUTH_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
-    if url:
-        parsed = urllib.parse.urlparse(url)
-        db = (parsed.path or "").lstrip("/")
-        if db:
-            return db
-
-    return "cloudvm_auth"
 
 
 def resolve_initial_mfa_code(login_json: dict, *, provided_code: str | None, non_interactive: bool) -> str | None:
@@ -160,7 +143,6 @@ def main() -> int:
         return 1
 
     sql = f"UPDATE users SET role='ADMIN' WHERE email='{email}';"
-    auth_db_name = resolve_auth_db_name()
     subprocess.run(
         [
             "docker",
@@ -172,7 +154,7 @@ def main() -> int:
             "-U",
             "cloudvm",
             "-d",
-            auth_db_name,
+            "cloudvm",
             "-c",
             sql,
         ],

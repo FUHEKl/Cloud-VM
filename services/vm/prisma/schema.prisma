@@ -47,11 +47,8 @@ model VirtualMachine {
   plan          Plan?    @relation(fields: [planId], references: [id])
   sshHost       String?
   sshPort       Int?     @default(22)
-  sshUsername   String?  @default("cloudvm")
-  vmPasswordEncrypted String?
-  guiReady      Boolean  @default(false)
-  guiCallbackToken String? @unique
-  guiReadyAt    DateTime?
+  sshUsername   String?  @default("root")
+  sshPrivateKeyEncrypted String?
   stoppedAt     DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

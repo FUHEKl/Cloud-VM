@@ -7,13 +7,13 @@ import {
   ConflictException,
   Logger,
 } from "@nestjs/common";
-import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { NatsService } from "../nats/nats.service";
 import { CreateVmDto } from "./dto/create-vm.dto";
 import { Prisma, VmStatus } from "@prisma/client";
-import { encryptVmPrivateKey } from "./vm-ssh-key.crypto";
-import { randomUUID } from "crypto";
+import { generateKeyPairSync } from "crypto";
+import sshpk from "sshpk";
+import { decryptVmPrivateKey, encryptVmPrivateKey } from "./vm-ssh-key.crypto";
 
 type InternalQuotaSnapshot = {
   hasActiveSubscription: boolean;
@@ -50,10 +50,60 @@ export class VmService {
     );
   }
 
+  private generateVmSshKeyPair() {
+    // Use RSA-2048 instead of ed25519 for three reasons:
+    //
+    // 1. Node.js exports RSA private keys as PKCS#1 PEM
+    //    ("-----BEGIN RSA PRIVATE KEY-----"), which ssh2 accepts natively —
+    //    no format conversion step needed, no silent fallback risk.
+    //
+    // 2. Every RSA key is visually unique from the very first base64 character.
+    //    ed25519 OpenSSH keys share a long constant header that spans several
+    //    lines, making different keys look identical at a glance.
+    //
+    // 3. RSA 2048 is universally supported by all SSH server/client versions.
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+    });
+
+    // PKCS#1 PEM — directly usable by the ssh2 library with no conversion
+    const privateKeyPem = privateKey.export({
+      type: "pkcs1",
+      format: "pem",
+    }) as string;
+
+    // Convert RSA public key SPKI → OpenSSH authorized_keys format
+    const publicKeySpki = publicKey.export({
+      type: "spki",
+      format: "pem",
+    }) as string;
+
+    let publicKeySsh: string;
+    try {
+      publicKeySsh = sshpk.parseKey(publicKeySpki, "pem").toString("ssh").trim();
+    } catch (err) {
+      this.logger.error("sshpk failed to convert RSA public key", err);
+      throw new InternalServerErrorException(
+        "Failed to generate a valid SSH public key",
+      );
+    }
+
+    if (!publicKeySsh || !publicKeySsh.startsWith("ssh-rsa")) {
+      throw new InternalServerErrorException(
+        "Generated public key does not look like a valid ssh-rsa key",
+      );
+    }
+
+    this.logger.log(
+      `Generated RSA-2048 SSH key pair (pub prefix = ${publicKeySsh.split(" ")[1]?.substring(0, 16)}…)`,
+    );
+
+    return { privateKeyPem, publicKeySsh };
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly nats: NatsService,
-    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private getUserServiceUrl(): string {
@@ -70,14 +120,6 @@ export class VmService {
       throw new InternalServerErrorException("Missing INTER_SERVICE_SYNC_TOKEN configuration");
     }
     return token;
-  }
-
-  private getPlatformBaseUrl(): string {
-    const raw = (process.env.PLATFORM_URL || "").trim();
-    if (!raw) {
-      throw new InternalServerErrorException("Missing PLATFORM_URL configuration");
-    }
-    return raw.replace(/\/$/, "");
   }
 
   private async fetchWithTimeout(
@@ -154,14 +196,31 @@ export class VmService {
 
   async createVm(dto: CreateVmDto, userId: string, role: string) {
     const isAdmin = role === "ADMIN";
-    const guiCallbackToken = randomUUID();
 
     let remoteQuota: InternalQuotaSnapshot | null = null;
     if (!isAdmin) {
       remoteQuota = await this.fetchInternalQuotaSnapshot(userId);
     }
 
-    const vmPasswordEncrypted = encryptVmPrivateKey(dto.vmPassword);
+    const providedPublicKey = dto.sshPublicKey?.trim();
+    let sshPublicKeyForVm = providedPublicKey || "";
+    let generatedSshPrivateKey: string | null = null;
+    let encryptedPrivateKey: string | null = null;
+
+    if (!providedPublicKey) {
+      const vmKeyPair = this.generateVmSshKeyPair();
+      sshPublicKeyForVm = vmKeyPair.publicKeySsh;
+      generatedSshPrivateKey = vmKeyPair.privateKeyPem;
+      encryptedPrivateKey = encryptVmPrivateKey(vmKeyPair.privateKeyPem);
+
+      this.logger.log(
+        `Generated VM SSH key pair (public prefix=${vmKeyPair.publicKeySsh.split(" ")[0]}, length=${vmKeyPair.publicKeySsh.length})`,
+      );
+    } else {
+      this.logger.log(
+        `Using caller-provided SSH public key for VM provisioning (length=${providedPublicKey.length})`,
+      );
+    }
 
     let vm;
     try {
@@ -256,9 +315,8 @@ export class VmService {
             userId,
             planId: dto.planId || null,
             status: VmStatus.PENDING,
-            sshUsername: dto.vmUsername,
-            vmPasswordEncrypted,
-            guiCallbackToken,
+            sshUsername: "cloudvm",
+            sshPrivateKeyEncrypted: encryptedPrivateKey,
           },
         });
         },
@@ -274,10 +332,10 @@ export class VmService {
       throw error;
     }
 
-    const platformBaseUrl = this.getPlatformBaseUrl();
-    const guiCallbackUrl = `${platformBaseUrl}/api/vms/${vm.id}/gui-ready`;
-
     // Publish to NATS for the worker to create the VM
+    this.logger.log(
+      `Publishing vm.create for ${vm.id} with sshPublicKey length=${sshPublicKeyForVm.length}`,
+    );
     await this.nats.publish("vm.create", {
       vmId: vm.id,
       name: vm.name,
@@ -286,10 +344,7 @@ export class VmService {
       diskGb: vm.diskGb,
       osTemplate: vm.osTemplate,
       userId,
-      vmUsername: dto.vmUsername,
-      vmPasswordB64: Buffer.from(dto.vmPassword).toString("base64"),
-      guiCallbackUrl,
-      guiCallbackToken,
+      sshPublicKey: sshPublicKeyForVm,
     });
 
     this.logSecurityEvent("vm.action.queued", {
@@ -300,38 +355,10 @@ export class VmService {
     });
 
     this.logger.log(`VM ${vm.id} created and queued for provisioning`);
-    return vm;
-  }
-
-  async markGuiReady(vmId: string, token: string): Promise<void> {
-    const vm = await this.prisma.virtualMachine.findUnique({ where: { id: vmId } });
-
-    if (!vm) {
-      throw new NotFoundException(`Virtual machine ${vmId} not found`);
-    }
-
-    if (!vm.guiCallbackToken || vm.guiCallbackToken !== token) {
-      this.logSecurityEvent("vm.gui.callback.invalid", {
-        vmId,
-        result: "denied",
-      });
-      throw new ForbiddenException("Invalid or already-used GUI callback token");
-    }
-
-    if (vm.guiReady) {
-      return;
-    }
-
-    await this.prisma.virtualMachine.update({
-      where: { id: vmId },
-      data: {
-        guiReady: true,
-        guiReadyAt: new Date(),
-        guiCallbackToken: null,
-      },
-    });
-
-    this.eventEmitter.emit("vm.guiReady", { vmId });
+    return {
+      ...vm,
+      generatedSshPrivateKey,
+    };
   }
 
   async listVms(
@@ -410,6 +437,43 @@ export class VmService {
     }
 
     return vm;
+  }
+
+  async getVmSshPrivateKey(vmId: string, userId: string, role: string) {
+    const vm = await this.prisma.virtualMachine.findUnique({
+      where: { id: vmId },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        sshPrivateKeyEncrypted: true,
+      },
+    });
+
+    if (!vm) {
+      throw new NotFoundException("Virtual machine not found");
+    }
+
+    if (role !== "ADMIN" && vm.userId !== userId) {
+      throw new ForbiddenException("Access denied");
+    }
+
+    if (!vm.sshPrivateKeyEncrypted) {
+      throw new NotFoundException("SSH private key is not available for this VM");
+    }
+
+    let privateKey: string;
+    try {
+      privateKey = decryptVmPrivateKey(vm.sshPrivateKeyEncrypted);
+    } catch {
+      throw new InternalServerErrorException("Failed to decrypt SSH private key");
+    }
+
+    return {
+      vmId: vm.id,
+      vmName: vm.name,
+      privateKey,
+    };
   }
 
   async vmAction(vmId: string, action: string, userId: string, role: string) {

@@ -62,6 +62,14 @@ export class VmController {
     return this.vmService.getVm(id, user.userId, user.role);
   }
 
+  @Get(":id/ssh-key")
+  getSshPrivateKey(
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @CurrentUser() user: { userId: string; role: string },
+  ) {
+    return this.vmService.getVmSshPrivateKey(id, user.userId, user.role);
+  }
+
   @Post(":id/action")
   performAction(
     @Param("id", new ParseUUIDPipe()) id: string,

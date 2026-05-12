@@ -470,6 +470,31 @@ export default function DashboardPage() {
             </Link>
 
             <Link
+              href="/dashboard/ssh-keys"
+              className="flex items-center gap-3 px-4 py-3 rounded-lg border border-cyber-border hover:border-cyber-cyan/30 hover:bg-cyber-cyan/5 transition-all duration-200"
+            >
+              <div className="w-8 h-8 rounded-lg bg-cyber-cyan/10 border border-cyber-cyan/20 flex items-center justify-center text-cyber-cyan">
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-sm font-medium text-cyber-text">
+                  SSH Keys
+                </div>
+                <div className="text-xs text-cyber-text-dim">
+                  Manage your SSH keys
+                </div>
+              </div>
+            </Link>
+
+            <Link
               href="/dashboard/assistant"
               className="flex items-center gap-3 px-4 py-3 rounded-lg border border-cyber-border hover:border-cyber-cyan/30 hover:bg-cyber-cyan/5 transition-all duration-200"
             >

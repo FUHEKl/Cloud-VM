@@ -50,8 +50,8 @@ api.interceptors.response.use(
         return api(original);
       } catch {
         clearAuthCookies();
-        if (window.location.pathname !== "/login") {
-          window.location.href = "/login";
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("auth:logout"));
         }
         return Promise.reject(error);
       }

@@ -42,20 +42,10 @@ export class CreateVmDto {
   @Matches(/^(student|pro|enterprise|unlimited)$/)
   planId?: string;
 
+  @IsOptional()
   @IsString()
-  @MinLength(3)
-  @MaxLength(32)
-  @Matches(/^[a-zA-Z_][a-zA-Z0-9_-]{2,31}$/, {
-    message: "Username must be 3-32 chars, start with a letter or underscore",
-  })
-  vmUsername!: string;
-
-  @IsString()
-  @MinLength(8)
-  @MaxLength(64)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[^\s:]{8,64}$/, {
-    message:
-      "Password needs 8-64 chars, uppercase, lowercase, number, no spaces or colons",
-  })
-  vmPassword!: string;
+  @MinLength(32)
+  @MaxLength(4096)
+  @Matches(/^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256)\s+\S+/)
+  sshPublicKey?: string;
 }

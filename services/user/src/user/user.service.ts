@@ -419,7 +419,7 @@ export class UserService {
       this.prisma.virtualMachine.findMany({
         where: {
           userId,
-          createdAt: { gte: cycleStartedAt },
+          status: { not: "DELETED" as any },
         },
         select: { status: true, createdAt: true, stoppedAt: true },
       }),
@@ -535,7 +535,7 @@ export class UserService {
       const vmsForHours = await this.prisma.virtualMachine.findMany({
         where: {
           userId,
-          createdAt: { gte: cycleStartedAt },
+          status: { not: "DELETED" as any },
         },
         select: { status: true, createdAt: true, stoppedAt: true },
       });

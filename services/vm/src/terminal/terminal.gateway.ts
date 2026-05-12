@@ -13,7 +13,6 @@ import { PrismaService } from "../prisma/prisma.service";
 import { Client, ClientChannel } from "ssh2";
 import { TerminalTelemetryService } from "./terminal-telemetry.service";
 import { createHash, createPrivateKey } from "crypto";
-import { decryptVmPrivateKey } from "../vm/vm-ssh-key.crypto";
 
 interface SshSession {
   sshClient: Client;
@@ -29,19 +28,6 @@ interface BastionConfig {
   privateKey?: string;
 }
 
-function normalizeIp(rawIp?: string): string {
-  if (!rawIp) return "unknown";
-  return rawIp.replace("::ffff:", "").trim();
-}
-
-function parseForwardedFor(value?: string | string[]): string | undefined {
-  const raw = Array.isArray(value) ? value[0] : value;
-  if (!raw) return undefined;
-
-  const first = raw.split(",")[0]?.trim();
-  return first ? normalizeIp(first) : undefined;
-}
-
 function extractCookieValue(rawCookie: string | undefined, cookieName: string): string | undefined {
   if (!rawCookie) return undefined;
   const parts = rawCookie.split(";");
@@ -55,9 +41,10 @@ function extractCookieValue(rawCookie: string | undefined, cookieName: string): 
 }
 
 function buildSocketFingerprint(client: Socket): string {
-  const forwardedIp = parseForwardedFor(client.handshake.headers["x-forwarded-for"]);
-  const realIp = parseForwardedFor(client.handshake.headers["x-real-ip"]);
-  const ip = forwardedIp || realIp || normalizeIp(client.handshake.address) || normalizeIp(client.conn?.remoteAddress);
+  const ip = (client.conn?.remoteAddress || client.handshake.address || "unknown").replace(
+    "::ffff:",
+    "",
+  );
   const userAgent =
     (typeof client.handshake.headers["user-agent"] === "string"
       ? client.handshake.headers["user-agent"]
@@ -148,6 +135,11 @@ export class TerminalGateway implements OnGatewayDisconnect {
     1,
     Number(process.env.TERMINAL_DANGEROUS_INPUT_MAX_VIOLATIONS || "3"),
   );
+  private readonly allowPasswordFallback = (() => {
+    const configured = (process.env.TERMINAL_ALLOW_PASSWORD_FALLBACK || "").trim().toLowerCase();
+    if (configured === "true") return true;
+    return false;
+  })();
   private readonly sshConnectTimeoutMs = Math.max(
     5000,
     Number(process.env.TERMINAL_SSH_CONNECT_TIMEOUT_MS ?? 20000),
@@ -176,6 +168,9 @@ export class TerminalGateway implements OnGatewayDisconnect {
       throw new Error("JWT_SECRET is required");
     }
 
+    if (this.allowPasswordFallback && !(process.env.TERMINAL_DEFAULT_VM_PASSWORD || "").trim()) {
+      throw new Error("TERMINAL_DEFAULT_VM_PASSWORD is required when password fallback is enabled");
+    }
   }
 
   private getBastionConfig(): BastionConfig | null {
@@ -227,12 +222,24 @@ export class TerminalGateway implements OnGatewayDisconnect {
   async handleConnectSsh(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    payload: { vmId: string; username?: string },
+    payload: { vmId: string; password?: string; username?: string; privateKey?: string },
   ) {
     try {
       if (!payload?.vmId || typeof payload.vmId !== "string") {
         this.telemetry.markConnectDenied(client.id, "invalid_vm_identifier");
         client.emit("error", { message: "Invalid VM identifier" });
+        return;
+      }
+
+      if (payload.password && payload.password.length > 256) {
+        this.telemetry.markConnectDenied(client.id, "password_too_long", payload.vmId);
+        client.emit("error", { message: "Password is too long" });
+        return;
+      }
+
+      if (payload.privateKey && payload.privateKey.length > 32768) {
+        this.telemetry.markConnectDenied(client.id, "private_key_too_large", payload.vmId);
+        client.emit("error", { message: "Private key is too large" });
         return;
       }
 
@@ -297,11 +304,6 @@ export class TerminalGateway implements OnGatewayDisconnect {
         return;
       }
 
-      if (!vm.vmPasswordEncrypted) {
-        client.emit("error", { message: "VM credentials not found" });
-        return;
-      }
-
       if (user.role !== "ADMIN" && vm.userId !== user.sub) {
         this.telemetry.markConnectDenied(client.id, "access_denied", payload.vmId, user.sub);
         client.emit("error", { message: "Access denied" });
@@ -325,19 +327,13 @@ export class TerminalGateway implements OnGatewayDisconnect {
       const sshClient = new Client();
       let bastionClient: Client | undefined;
       let hasAttemptedBastionFallback = false;
+      let hasAttemptedPasswordRetry = false;
       const bastionConfig = this.getBastionConfig();
-      const username = (payload.username || vm.sshUsername || "").trim();
-      if (!username) {
-        client.emit("error", { message: "VM username not configured" });
-        return;
-      }
-      let decryptedPassword: string;
-      try {
-        decryptedPassword = decryptVmPrivateKey(vm.vmPasswordEncrypted);
-      } catch {
-        client.emit("error", { message: "Failed to decrypt VM credentials" });
-        return;
-      }
+      const username = payload.username ?? vm.sshUsername ?? "cloudvm";
+      const normalizedPrivateKey = payload.privateKey
+        ? normalizePrivateKeyForSsh(payload.privateKey, this.logger, `vm:${payload.vmId}`)
+        : "";
+      const defaultVmPassword = (process.env.TERMINAL_DEFAULT_VM_PASSWORD || "").trim();
       let connectTimeout: NodeJS.Timeout | null = null;
 
       const clearConnectTimeout = () => {
@@ -454,18 +450,29 @@ export class TerminalGateway implements OnGatewayDisconnect {
               const tunneledConnectOptions: {
                 sock: any;
                 username: string;
-                password: string;
+                password?: string;
+                privateKey?: string;
                 readyTimeout: number;
                 keepaliveInterval: number;
                 keepaliveCountMax: number;
               } = {
                 sock: stream,
                 username,
-                password: decryptedPassword,
                 readyTimeout: 30000,
                 keepaliveInterval: 30000,
                 keepaliveCountMax: 5,
               };
+
+              if (normalizedPrivateKey) {
+                tunneledConnectOptions.privateKey = normalizedPrivateKey;
+                if (this.allowPasswordFallback && username === "cloudvm" && defaultVmPassword) {
+                  // Reliability fallback: when key auth fails due delayed/partial key setup,
+                  // also allow password auth on the same attempt for the default cloudvm user.
+                  tunneledConnectOptions.password = payload.password || defaultVmPassword;
+                }
+              } else if (payload.password) {
+                tunneledConnectOptions.password = payload.password;
+              }
 
               viaBastionClient.connect(tunneledConnectOptions);
             },
@@ -513,6 +520,119 @@ export class TerminalGateway implements OnGatewayDisconnect {
         }
 
         bastionClient.connect(bastionConnectOptions);
+        return true;
+      };
+
+      const tryPasswordOnlyRetry = (reason: string): boolean => {
+        const candidatePassword = payload.password || defaultVmPassword;
+        if (
+          hasAttemptedPasswordRetry ||
+          !this.allowPasswordFallback ||
+          !normalizedPrivateKey ||
+          !candidatePassword ||
+          username !== "cloudvm"
+        ) {
+          return false;
+        }
+
+        hasAttemptedPasswordRetry = true;
+        this.logger.warn(
+          `SSH key authentication failed (${reason}); retrying password-only for ${username}@${vm.sshHost}:${vm.sshPort ?? 22}`,
+        );
+
+        try {
+          sshClient.end();
+        } catch {
+          // ignore
+        }
+
+        const retryClient = new Client();
+
+        retryClient.on("ready", () => {
+          clearConnectTimeout();
+          this.logger.log(
+            `SSH ready (password retry) for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) as ${username}`,
+          );
+
+          retryClient.shell(
+            { term: "xterm-256color", cols: 80, rows: 24 },
+            (err, stream) => {
+              if (err) {
+                this.logger.error("Failed to open SSH shell (password retry)", err);
+                this.telemetry.markConnectFailed(client.id, "ssh_shell_open_failed", vm.id, user.sub);
+                client.emit("error", { message: "Failed to open SSH shell" });
+                retryClient.end();
+                return;
+              }
+
+              this.sessions.set(client.id, { sshClient: retryClient, stream });
+              this.telemetry.markConnectSuccess(client.id, vm.id, user.sub);
+
+              client.emit("connected", {
+                message: `Connected to ${vm.name} (${vm.sshHost})`,
+              });
+
+              stream.on("data", (data: Buffer) => {
+                this.telemetry.addOutputBytes(client.id, data.byteLength);
+                client.emit("output", data.toString("utf-8"));
+              });
+
+              stream.stderr.on("data", (data: Buffer) => {
+                this.telemetry.addOutputBytes(client.id, data.byteLength);
+                client.emit("output", data.toString("utf-8"));
+              });
+
+              stream.on("close", () => {
+                this.logger.log(`SSH stream closed for VM ${vm.id}`);
+                this.telemetry.markDisconnect(client.id, "ssh_stream_closed");
+                client.emit("disconnected", { message: "SSH session closed" });
+                this.cleanupSession(client.id);
+              });
+            },
+          );
+        });
+
+        retryClient.on("error", (retryErr) => {
+          clearConnectTimeout();
+          this.logger.error(
+            `SSH error after password retry for VM ${vm.id} (${vm.sshHost})`,
+            retryErr.message,
+          );
+          this.telemetry.markConnectFailed(client.id, `ssh_error:${retryErr.message}`, vm.id, user.sub);
+          client.emit("error", {
+            message: `SSH authentication failed at ${vm.sshHost}. Password retry also failed.`,
+          });
+          this.cleanupSession(client.id);
+        });
+
+        retryClient.on("close", () => {
+          clearConnectTimeout();
+          this.logger.log(`SSH connection closed for VM ${vm.id} (password retry)`);
+          this.telemetry.markDisconnect(client.id, "ssh_connection_closed");
+          this.cleanupSession(client.id);
+        });
+
+        connectTimeout = setTimeout(() => {
+          this.logger.error(
+            `SSH password-retry timeout for VM ${vm.id} (${vm.sshHost}:${vm.sshPort ?? 22}) after ${this.sshConnectTimeoutMs}ms`,
+          );
+          this.telemetry.markConnectFailed(client.id, "ssh_connect_timeout_password_retry", vm.id, user.sub);
+          client.emit("error", {
+            message: `Timed out reaching ${vm.sshHost}:${vm.sshPort ?? 22} during password retry.`,
+          });
+          this.cleanupSession(client.id);
+        }, this.sshConnectTimeoutMs);
+
+        retryClient.connect({
+          host: vm.sshHost || undefined,
+          port: vm.sshPort ?? 22,
+          username,
+          password: candidatePassword,
+          readyTimeout: 30000,
+          keepaliveInterval: 30000,
+          keepaliveCountMax: 5,
+        });
+
         return true;
       };
 
@@ -566,6 +686,13 @@ export class TerminalGateway implements OnGatewayDisconnect {
         clearConnectTimeout();
 
         if (
+          (err.message.includes("Authentication") || err.message.includes("auth")) &&
+          tryPasswordOnlyRetry(err.message)
+        ) {
+          return;
+        }
+
+        if (
           (err.message.includes("ECONNREFUSED") ||
             err.message.includes("ETIMEDOUT") ||
             err.message.includes("Timed out")) &&
@@ -584,7 +711,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
         } else if (err.message.includes("ETIMEDOUT") || err.message.includes("Timed out")) {
           userMessage = `SSH timed out connecting to ${vm.sshHost}. The VM may still be booting, or check that port 22 is reachable.`;
         } else if (err.message.includes("Authentication") || err.message.includes("auth")) {
-          userMessage = `SSH authentication failed at ${vm.sshHost}. Verify the VM credentials and try again.`;
+          userMessage = `SSH authentication failed at ${vm.sshHost}. The SSH key may not have been injected into the VM yet — wait a moment and try again.`;
         } else {
           userMessage = "SSH connection error. Please retry or contact support.";
         }
@@ -604,7 +731,8 @@ export class TerminalGateway implements OnGatewayDisconnect {
         host: string;
         port: number;
         username: string;
-        password: string;
+        password?: string;
+        privateKey?: string;
         readyTimeout: number;
         keepaliveInterval: number;
         keepaliveCountMax: number;
@@ -612,7 +740,6 @@ export class TerminalGateway implements OnGatewayDisconnect {
         host: vm.sshHost,
         port: vm.sshPort ?? 22,
         username,
-        password: decryptedPassword,
         // 30 s gives slow VMs time to finish cloud-init before we give up.
         // 15 s was too short for freshly booted VMs.
         readyTimeout: 30000,
@@ -622,7 +749,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
 
       this.logger.log(
         `SSH connecting: ${username}@${vm.sshHost}:${vm.sshPort ?? 22} ` +
-        "auth=password",
+        `auth=${normalizedPrivateKey ? "privateKey" : "password"}`,
       );
 
       connectTimeout = setTimeout(() => {
@@ -641,6 +768,23 @@ export class TerminalGateway implements OnGatewayDisconnect {
         });
         this.cleanupSession(client.id);
       }, this.sshConnectTimeoutMs);
+
+      if (normalizedPrivateKey) {
+        connectOptions.privateKey = normalizedPrivateKey;
+        if (this.allowPasswordFallback && username === "cloudvm" && defaultVmPassword) {
+          // Reliability fallback for dev/lab templates that may race key injection.
+          connectOptions.password = payload.password || defaultVmPassword;
+        }
+      } else if (payload.password) {
+        connectOptions.password = payload.password;
+      } else {
+        // Neither credential was provided — tell the client explicitly
+        this.telemetry.markConnectDenied(client.id, "no_credentials", payload.vmId, user.sub);
+        client.emit("error", {
+          message: "No SSH credentials provided. Supply a private key or password.",
+        });
+        return;
+      }
 
       sshClient.connect(connectOptions);
     } catch (error) {

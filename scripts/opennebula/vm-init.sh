@@ -5,8 +5,8 @@
 # This script runs inside each VM at first boot via
 # OpenNebula contextualization. It:
 #   1. Enables SSH password auth (for web terminal)
-#   2. Creates a VM user from injected context
-#   3. Uses password-based authentication only
+#   2. Creates the 'cloudvm' user with sudo
+#   3. Injects SSH public keys from OpenNebula context
 #   4. Installs basic development tools
 # =================================================
 
@@ -122,42 +122,98 @@ if [ -f "$SSHD_CONFIG" ]; then
     echo "  ✓ SSH password authentication configured"
 fi
 
-# ---------- 2. Create VM User from Context ----------
-# Read credentials injected by CloudVM platform
-VM_USER="${VM_USERNAME:-cloudvm}"
-VM_PASS_B64="${VM_PASSWORD_B64:-}"
+# ---------- 2. Create cloudvm User ----------
+USERNAME="cloudvm"
+DEFAULT_PASS="cloudvm123"  # Users should change this via the platform
 
-# Decode password (base64 avoids shell escaping issues)
-if [ -n "$VM_PASS_B64" ]; then
-    VM_PASS=$(echo "$VM_PASS_B64" | base64 -d 2>/dev/null)
-else
-    # Fallback only if no credentials were injected (should not happen)
-    VM_PASS="changeme_$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)"
-    echo "  ⚠ No credentials injected — using random fallback password"
+if ! id "$USERNAME" &>/dev/null; then
+    useradd -m -s /bin/bash "$USERNAME"
+    echo "  ✓ User '$USERNAME' created"
 fi
 
-if ! id "$VM_USER" &>/dev/null; then
-    useradd -m -s /bin/bash "$VM_USER"
-    echo "  ✓ User '$VM_USER' created"
-fi
+echo "$USERNAME:$DEFAULT_PASS" | chpasswd
+echo "  ✓ Password set for '$USERNAME'"
 
-echo "$VM_USER:$VM_PASS" | chpasswd
-echo "  ✓ Password set for '$VM_USER'"
-
+# Add to sudo/wheel group
 if getent group sudo &>/dev/null; then
-    usermod -aG sudo "$VM_USER"
+    usermod -aG sudo "$USERNAME"
 elif getent group wheel &>/dev/null; then
-    usermod -aG wheel "$VM_USER"
+    usermod -aG wheel "$USERNAME"
 fi
 echo "  ✓ Sudo access granted"
 
-# ---------- 3. SSH Keys ----------
-# SSH key injection removed — platform uses password auth only
-USER_HOME="/home/$VM_USER"
+# ---------- 3. Inject SSH Keys ----------
+USER_HOME="/home/$USERNAME"
 SSH_DIR="$USER_HOME/.ssh"
+AUTH_KEYS="$SSH_DIR/authorized_keys"
+
 mkdir -p "$SSH_DIR"
 chmod 700 "$SSH_DIR"
-chown -R "$VM_USER:$VM_USER" "$SSH_DIR"
+touch "$AUTH_KEYS"
+
+append_ssh_keys_payload() {
+    local payload="$1"
+    local source="$2"
+
+    if [ -z "$payload" ]; then
+        return 0
+    fi
+
+    # Normalize CRLF and literal "\\n" into real newlines.
+    payload="${payload//$'\r'/}"
+    if [[ "$payload" == *"\\n"* ]]; then
+        payload="$(printf '%b' "$payload")"
+    fi
+
+    local added=0
+    while IFS= read -r key_line; do
+        key_line="${key_line#${key_line%%[![:space:]]*}}"
+        key_line="${key_line%${key_line##*[![:space:]]}}"
+        [ -z "$key_line" ] && continue
+
+        case "$key_line" in
+            ssh-rsa\ *|ssh-ed25519\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *)
+                echo "$key_line" >> "$AUTH_KEYS"
+                added=$((added + 1))
+                ;;
+            *)
+                echo "  ⚠ Skipping non-SSH key line from ${source}: ${key_line:0:40}..."
+                ;;
+        esac
+    done <<< "$payload"
+
+    if [ "$added" -gt 0 ]; then
+        echo "  ✓ Injected $added SSH key(s) from ${source}"
+    else
+        echo "  ⚠ No valid SSH public keys found from ${source}"
+    fi
+}
+
+# From OpenNebula context
+if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
+    append_ssh_keys_payload "$SSH_PUBLIC_KEY" "OpenNebula context variable"
+fi
+
+# Also check context CD-ROM
+CONTEXT_DEV="/dev/sr0"
+CONTEXT_MNT="/mnt/context"
+if [ -b "$CONTEXT_DEV" ]; then
+    mkdir -p "$CONTEXT_MNT"
+    mount -o ro "$CONTEXT_DEV" "$CONTEXT_MNT" 2>/dev/null || true
+    if [ -f "$CONTEXT_MNT/context.sh" ]; then
+        source "$CONTEXT_MNT/context.sh" 2>/dev/null || true
+        if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
+            append_ssh_keys_payload "$SSH_PUBLIC_KEY" "context CD"
+        fi
+    fi
+    umount "$CONTEXT_MNT" 2>/dev/null || true
+fi
+
+if [ -f "$AUTH_KEYS" ]; then
+    sort -u "$AUTH_KEYS" -o "$AUTH_KEYS"
+    chmod 600 "$AUTH_KEYS"
+    chown -R "$USERNAME:$USERNAME" "$SSH_DIR"
+fi
 
 # ---------- 4. Install Dev Tools ----------
 echo "  Installing development tools..."
@@ -180,6 +236,7 @@ fi
 
 echo ""
 echo "=== CloudVM Init Script Complete ==="
-echo "  User: $VM_USER"
-echo "  SSH: Enabled (password auth)"
+echo "  User: $USERNAME"
+echo "  Default Password: $DEFAULT_PASS"
+echo "  SSH: Enabled (password + key auth)"
 echo ""

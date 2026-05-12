@@ -7,8 +7,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-cloudvm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cloudvm_secret}
       POSTGRES_DB: ${POSTGRES_DB:-cloudvm}
-    expose:
-      - "5432"
+    ports:
+      - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/postgres/init-microservice-databases.sql:/docker-entrypoint-initdb.d/01-init-microservice-databases.sql:ro
@@ -53,11 +53,7 @@ services:
       if [ ! -f /etc/nginx/ssl/server.crt ] || [ ! -f /etc/nginx/ssl/server.key ]; then
         echo '[nginx] Generating local self-signed certificate for HTTPS...';
         mkdir -p /etc/nginx/ssl;
-        openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
-          -keyout /etc/nginx/ssl/server.key \
-          -out /etc/nginx/ssl/server.crt \
-          -subj '/CN=localhost' \
-          -addext "subjectAltName=DNS:localhost,IP:127.0.0.1";
+        openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt -subj '/CN=localhost';
       fi;
       nginx -g 'daemon off;'
       "
@@ -72,7 +68,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3001:3001"
+      - "3001:3001"
     expose:
       - "3001"
     environment:
@@ -182,13 +178,10 @@ services:
       - VM_SSH_KEY_SECRET=${VM_SSH_KEY_SECRET}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - NATS_URL=nats://nats:4222
-      - NATS_USER=${NATS_USER:-cloudvm_nats}
-      - NATS_PASSWORD=${NATS_PASSWORD}
+      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
       - REDIS_HOST=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CORS_ORIGIN=${CORS_ORIGIN}
-      - PLATFORM_URL=${PLATFORM_URL}
       - ONE_XMLRPC=${ONE_XMLRPC:-}
       - ONE_USERNAME=${ONE_USERNAME:-}
       - ONE_PASSWORD=${ONE_PASSWORD:-}
@@ -289,7 +282,7 @@ services:
         NEXT_PUBLIC_VM_WS_URL: ${NEXT_PUBLIC_VM_WS_URL}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     expose:
       - "3000"
     environment:

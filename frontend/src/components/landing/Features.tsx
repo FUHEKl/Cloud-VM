@@ -51,6 +51,24 @@ const features = [
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       </svg>
     ),
+    title: "SSH Key Management",
+    description:
+      "Upload and manage your SSH public keys. Securely connect to your VMs with key-based authentication.",
+    color: "green" as const,
+  },
+  {
+    icon: (
+      <svg
+        className="w-7 h-7"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      >
+        <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
     title: "Resource Monitoring",
     description:
       "Track CPU, memory, and disk usage in real-time. Get notifications when resources are running low.",

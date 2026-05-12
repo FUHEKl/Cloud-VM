@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
+import { saveGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
 import { resolveVmWsOrigin } from "@/lib/runtime-urls";
 
 export interface VmStatusUpdate {
@@ -12,6 +13,11 @@ export interface VmStatusUpdate {
   oneVmId?: number;
   sshHost?: string;
   error?: string;
+}
+
+export interface VmSshKeyUpdate {
+  vmId: string;
+  privateKey: string;
 }
 
 /**
@@ -27,13 +33,13 @@ export interface VmStatusUpdate {
  */
 export function useVmSocket(
   onStatusUpdate?: (data: VmStatusUpdate) => void,
-  onGuiReady?: (data: { vmId: string }) => void,
+  onSshKeyUpdate?: (data: VmSshKeyUpdate) => void,
 ): React.RefObject<Socket | null> {
   const socketRef = useRef<Socket | null>(null);
   const statusCallbackRef = useRef(onStatusUpdate);
+  const sshKeyCallbackRef = useRef(onSshKeyUpdate);
   statusCallbackRef.current = onStatusUpdate;
-  const guiReadyCallbackRef = useRef(onGuiReady);
-  guiReadyCallbackRef.current = onGuiReady;
+  sshKeyCallbackRef.current = onSshKeyUpdate;
 
   useEffect(() => {
     // Use the configured WS URL (HTTPS origin when behind Nginx).
@@ -56,8 +62,11 @@ export function useVmSocket(
       statusCallbackRef.current?.(data);
     });
 
-    socket.on("vm:gui-ready", (data: { vmId: string }) => {
-      guiReadyCallbackRef.current?.(data);
+    socket.on("vm:ssh-key", (data: VmSshKeyUpdate) => {
+      if (data?.vmId && data?.privateKey) {
+        saveGeneratedVmSshPrivateKey(data.vmId, data.privateKey);
+      }
+      sshKeyCallbackRef.current?.(data);
     });
 
     return () => {
