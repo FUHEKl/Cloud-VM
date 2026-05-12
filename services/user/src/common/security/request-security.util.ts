@@ -3,7 +3,11 @@ import type { Request } from "express";
 
 function normalizeIp(rawIp?: string): string {
   if (!rawIp) return "unknown";
-  return rawIp.replace("::ffff:", "").trim();
+  const normalized = rawIp.replace("::ffff:", "").trim();
+  if (normalized === "::1" || normalized === "127.0.0.1") {
+    return "127.0.0.1";
+  }
+  return normalized;
 }
 
 export function getClientIp(req: Request): string {

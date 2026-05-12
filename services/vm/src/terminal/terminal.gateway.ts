@@ -40,11 +40,29 @@ function extractCookieValue(rawCookie: string | undefined, cookieName: string): 
   return undefined;
 }
 
+function getSocketClientIp(client: Socket): string {
+  const forwardedFor = client.handshake.headers["x-forwarded-for"];
+  const forwardedForValue = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : forwardedFor;
+  const realIp = client.handshake.headers["x-real-ip"];
+  const realIpValue = Array.isArray(realIp) ? realIp[0] : realIp;
+
+  const rawIp =
+    (typeof forwardedForValue === "string" && forwardedForValue.trim()
+      ? forwardedForValue.split(",")[0]
+      : "") ||
+    (typeof realIpValue === "string" ? realIpValue : "") ||
+    client.conn?.remoteAddress ||
+    client.handshake.address ||
+    "unknown";
+
+  const normalized = rawIp.replace("::ffff:", "").trim();
+  return normalized === "::1" || normalized === "127.0.0.1" ? "127.0.0.1" : normalized;
+}
+
 function buildSocketFingerprint(client: Socket): string {
-  const ip = (client.conn?.remoteAddress || client.handshake.address || "unknown").replace(
-    "::ffff:",
-    "",
-  );
+  const ip = getSocketClientIp(client);
   const userAgent =
     (typeof client.handshake.headers["user-agent"] === "string"
       ? client.handshake.headers["user-agent"]

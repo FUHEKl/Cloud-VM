@@ -3,11 +3,33 @@ import type { Request } from "express";
 
 function normalizeIp(rawIp?: string): string {
   if (!rawIp) return "unknown";
-  return rawIp.replace("::ffff:", "").trim();
+  const normalized = rawIp.replace("::ffff:", "").trim();
+  if (normalized === "::1" || normalized === "127.0.0.1") {
+    return "127.0.0.1";
+  }
+  return normalized;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | null {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    return value[0]?.trim() || null;
+  }
+  return value.trim() || null;
 }
 
 export function getClientIp(req: Request): string {
-  return normalizeIp(req.ip || req.socket.remoteAddress || "unknown");
+  const forwardedFor = firstHeaderValue(req.headers["x-forwarded-for"]);
+  const realIp = firstHeaderValue(req.headers["x-real-ip"]);
+
+  const rawIp =
+    (forwardedFor ? forwardedFor.split(",")[0] : null) ||
+    realIp ||
+    req.ip ||
+    req.socket.remoteAddress ||
+    "unknown";
+
+  return normalizeIp(rawIp);
 }
 
 export function getUserAgent(req: Request): string {
