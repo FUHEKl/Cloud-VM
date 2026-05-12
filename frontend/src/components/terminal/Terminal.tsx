@@ -11,13 +11,14 @@ import "xterm/css/xterm.css";
 interface TerminalProps {
   vmId: string;
   ipAddress: string;
+  sshUsername?: string | null;
   onDisconnect?: () => void;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Terminal component
 // ──────────────────────────────────────────────────────────────────────────────
-export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProps) {
+export default function Terminal({ vmId, ipAddress, sshUsername, onDisconnect }: TerminalProps) {
   const containerRef  = useRef<HTMLDivElement>(null);
   const termRef       = useRef<XTerminal | null>(null);
   const socketRef     = useRef<Socket | null>(null);
@@ -35,9 +36,10 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
     connectedRef.current = true;
     socketRef.current.emit("connect-ssh", {
       vmId: vmIdRef.current,
+      username: sshUsername?.trim() || undefined,
     });
     termRef.current?.writeln("\r\n\x1b[32m● Connecting to VM...\x1b[0m\r\n");
-  }, []);
+  }, [sshUsername]);
 
   // ── xterm + socket setup ──────────────────────────────────────────────────
   useEffect(() => {

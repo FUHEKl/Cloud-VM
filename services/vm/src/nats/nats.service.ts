@@ -33,11 +33,19 @@ export class NatsService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    const natsUrl = process.env.NATS_URL || "nats://localhost:4222";
+    // Strip any embedded credentials from the URL — use user/pass options instead
+    const rawUrl = process.env.NATS_URL || "nats://localhost:4222";
+    const natsUrl = rawUrl.replace(/\/\/[^@]+@/, "//");
+    const natsUser = process.env.NATS_USER;
+    const natsPass = process.env.NATS_PASSWORD;
     let retries = 12;
     while (retries-- > 0) {
       try {
-        this.connection = await connect({ servers: natsUrl });
+        this.connection = await connect({
+          servers: natsUrl,
+          ...(natsUser ? { user: natsUser } : {}),
+          ...(natsPass ? { pass: natsPass } : {}),
+        });
         this.js = this.connection.jetstream();
         this.logger.log(`Connected to NATS at ${natsUrl}`);
         await this.ensureStream();

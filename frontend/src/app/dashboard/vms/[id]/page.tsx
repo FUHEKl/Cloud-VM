@@ -256,6 +256,7 @@ export default function VmDetailPage() {
           <Terminal
             vmId={vm.id}
             ipAddress={vm.ipAddress}
+            sshUsername={vm.sshUsername}
             onDisconnect={() => setShowTerminal(false)}
           />
         </div>

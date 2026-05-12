@@ -182,10 +182,13 @@ services:
       - VM_SSH_KEY_SECRET=${VM_SSH_KEY_SECRET}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
+      - NATS_URL=nats://nats:4222
+      - NATS_USER=${NATS_USER:-cloudvm_nats}
+      - NATS_PASSWORD=${NATS_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CORS_ORIGIN=${CORS_ORIGIN}
+      - PLATFORM_URL=${PLATFORM_URL}
       - ONE_XMLRPC=${ONE_XMLRPC:-}
       - ONE_USERNAME=${ONE_USERNAME:-}
       - ONE_PASSWORD=${ONE_PASSWORD:-}
@@ -285,6 +288,8 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_VM_WS_URL: ${NEXT_PUBLIC_VM_WS_URL}
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
     expose:
       - "3000"
     environment:

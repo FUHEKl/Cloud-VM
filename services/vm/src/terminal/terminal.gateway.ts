@@ -29,6 +29,19 @@ interface BastionConfig {
   privateKey?: string;
 }
 
+function normalizeIp(rawIp?: string): string {
+  if (!rawIp) return "unknown";
+  return rawIp.replace("::ffff:", "").trim();
+}
+
+function parseForwardedFor(value?: string | string[]): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return undefined;
+
+  const first = raw.split(",")[0]?.trim();
+  return first ? normalizeIp(first) : undefined;
+}
+
 function extractCookieValue(rawCookie: string | undefined, cookieName: string): string | undefined {
   if (!rawCookie) return undefined;
   const parts = rawCookie.split(";");
@@ -42,10 +55,9 @@ function extractCookieValue(rawCookie: string | undefined, cookieName: string): 
 }
 
 function buildSocketFingerprint(client: Socket): string {
-  const ip = (client.conn?.remoteAddress || client.handshake.address || "unknown").replace(
-    "::ffff:",
-    "",
-  );
+  const forwardedIp = parseForwardedFor(client.handshake.headers["x-forwarded-for"]);
+  const realIp = parseForwardedFor(client.handshake.headers["x-real-ip"]);
+  const ip = forwardedIp || realIp || normalizeIp(client.handshake.address) || normalizeIp(client.conn?.remoteAddress);
   const userAgent =
     (typeof client.handshake.headers["user-agent"] === "string"
       ? client.handshake.headers["user-agent"]
@@ -215,7 +227,7 @@ export class TerminalGateway implements OnGatewayDisconnect {
   async handleConnectSsh(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    payload: { vmId: string },
+    payload: { vmId: string; username?: string },
   ) {
     try {
       if (!payload?.vmId || typeof payload.vmId !== "string") {
@@ -314,7 +326,11 @@ export class TerminalGateway implements OnGatewayDisconnect {
       let bastionClient: Client | undefined;
       let hasAttemptedBastionFallback = false;
       const bastionConfig = this.getBastionConfig();
-      const username = vm.sshUsername ?? "cloudvm";
+      const username = (payload.username || vm.sshUsername || "").trim();
+      if (!username) {
+        client.emit("error", { message: "VM username not configured" });
+        return;
+      }
       let decryptedPassword: string;
       try {
         decryptedPassword = decryptVmPrivateKey(vm.vmPasswordEncrypted);

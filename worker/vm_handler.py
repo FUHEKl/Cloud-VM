@@ -4,6 +4,7 @@ import logging
 import os
 import unicodedata
 import re
+import math
 
 import pyone
 import redis as redis_lib
@@ -92,11 +93,15 @@ class VMHandler:
             if not gui_callback_token:
                 raise ValueError("guiCallbackToken is required")
 
+            disk_mb = max(1, int(math.ceil(float(disk_gb) * 1024)))
+            template_info = await asyncio.to_thread(self.one.template.info, template_id)
+            disk_override = self._build_disk_override(template_info, disk_mb)
             escaped_name = _escape_one_template_value(name)
             extra_template = (
                 f'NAME="{escaped_name}"\n'
                 f"CPU={cpu}\n"
                 f"MEMORY={ram_mb}\n"
+                f"{disk_override}"
                 f'VM_USERNAME="{_escape_one_template_value(vm_username)}"\n'
                 f'VM_PASSWORD_B64="{_escape_one_template_value(vm_password_b64)}"\n'
                 f'PLATFORM_CALLBACK_URL="{_escape_one_template_value(gui_callback_url)}"\n'
@@ -303,7 +308,6 @@ class VMHandler:
                             ip_address=ip,
                             one_vm_id=one_vm_id,
                             ssh_host=ip,
-                            ssh_username="cloudvm",
                         )
                         self._cache_vm_status(vm_id, "RUNNING", ip=ip)
                         await self._publish_status(nats_client, vm_id, "RUNNING", {
@@ -428,6 +432,29 @@ class VMHandler:
             f"Template '{template_name}' not found. Available: {[t.NAME for t in templates]}"
         )
         return None
+
+    def _build_disk_override(self, template_info, disk_mb: int) -> str:
+        """Build a DISK override that preserves IMAGE/IMAGE_ID to avoid unknown disk type errors."""
+        try:
+            template = template_info.TEMPLATE
+            disk = template.get("DISK") if template else None
+            if isinstance(disk, list):
+                disk = disk[0]
+            image_id = None
+            image_name = None
+            if isinstance(disk, dict):
+                image_id = disk.get("IMAGE_ID")
+                image_name = disk.get("IMAGE")
+
+            if image_id:
+                return f'DISK = [ DISK_ID = 0, IMAGE_ID = "{image_id}", SIZE = "{disk_mb}" ]\n'
+            if image_name:
+                safe_name = _escape_one_template_value(str(image_name))
+                return f'DISK = [ DISK_ID = 0, IMAGE = "{safe_name}", SIZE = "{disk_mb}" ]\n'
+        except Exception as e:
+            logger.warning(f"Failed to build DISK override, falling back without IMAGE: {e}")
+
+        return f'DISK = [ DISK_ID = 0, SIZE = "{disk_mb}" ]\n'
 
     async def _publish_status(
         self, nats_client, vm_id: str, status: str, extra_data: dict = None
