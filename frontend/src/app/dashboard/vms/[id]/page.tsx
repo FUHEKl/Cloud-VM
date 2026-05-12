@@ -7,6 +7,7 @@ import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
 import type { VirtualMachine } from "@/types";
 import { useVmSocket } from "@/hooks/useVmSocket";
+import GuiButton from "@/components/GuiButton";
 
 const Terminal = dynamic(() => import("@/components/terminal/Terminal"), {
   ssr: false,
@@ -70,27 +71,33 @@ export default function VmDetailPage() {
   }, [fetchVm]);
 
   // Real-time status updates via WebSocket — instant, no 10s wait
-  useVmSocket((update) => {
-    if (update.vmId !== id) return;
+  useVmSocket(
+    (update) => {
+      if (update.vmId !== id) return;
 
-    if (update.status === "DELETED") {
-      router.push("/dashboard/vms");
-      return;
-    }
+      if (update.status === "DELETED") {
+        router.push("/dashboard/vms");
+        return;
+      }
 
-    setVm((prev) =>
-      prev
-        ? {
-            ...prev,
-            status:    update.status as VirtualMachine["status"],
-            ipAddress: update.ipAddress ?? prev.ipAddress,
-            oneVmId:   update.oneVmId   ?? prev.oneVmId,
-            sshHost:   update.sshHost   ?? prev.sshHost,
-            updatedAt: new Date().toISOString(),
-          }
-        : prev,
-    );
-  });
+      setVm((prev) =>
+        prev
+          ? {
+              ...prev,
+              status:    update.status as VirtualMachine["status"],
+              ipAddress: update.ipAddress ?? prev.ipAddress,
+              oneVmId:   update.oneVmId   ?? prev.oneVmId,
+              sshHost:   update.sshHost   ?? prev.sshHost,
+              updatedAt: new Date().toISOString(),
+            }
+          : prev,
+      );
+    },
+    (data) => {
+      if (data.vmId !== id) return;
+      setVm((prev) => (prev ? { ...prev, guiReady: true } : prev));
+    },
+  );
 
   const handleAction = async (action: string) => {
     setActionLoading(action);
@@ -183,6 +190,9 @@ export default function VmDetailPage() {
             >
               {showTerminal ? "✕ Close Terminal" : "⚡ Open Terminal"}
             </button>
+          )}
+          {isRunning && (
+            <GuiButton vmId={vm.id} guiReady={Boolean(vm.guiReady)} />
           )}
           {isRunning && (
             <>

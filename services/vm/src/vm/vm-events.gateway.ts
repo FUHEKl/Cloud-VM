@@ -5,6 +5,7 @@ import {
   OnGatewayDisconnect,
 } from "@nestjs/websockets";
 import { Logger, OnModuleInit } from "@nestjs/common";
+import { OnEvent } from "@nestjs/event-emitter";
 import { Server, Socket } from "socket.io";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -187,6 +188,25 @@ export class VmEventsGateway
       );
     } catch (error) {
       this.logger.error(`Error broadcasting VM status: ${error}`);
+    }
+  }
+
+  @OnEvent("vm.guiReady")
+  async handleVmGuiReady(payload: { vmId: string }) {
+    try {
+      const vm = await this.prisma.virtualMachine.findUnique({
+        where: { id: payload.vmId },
+        select: { userId: true },
+      });
+
+      if (!vm) return;
+
+      this.server.to(`user:${vm.userId}`).emit("vm:gui-ready", {
+        vmId: payload.vmId,
+      });
+      this.server.to("admin").emit("vm:gui-ready", { vmId: payload.vmId });
+    } catch (error) {
+      this.logger.error(`Error broadcasting vm.guiReady: ${error}`);
     }
   }
 

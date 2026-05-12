@@ -12,6 +12,7 @@ import { PlanProxyMiddleware } from "./middlewares/plan-proxy.middleware";
 import { TerminalProxyMiddleware } from "./middlewares/terminal-proxy.middleware";
 import { TerminalApiProxyMiddleware } from "./middlewares/terminal-api-proxy.middleware";
 import { VmEventsProxyMiddleware } from "./middlewares/vm-events-proxy.middleware";
+import { VncProxyMiddleware } from "./middlewares/vnc-proxy.middleware";
 import { AiProxyMiddleware } from "./middlewares/ai-proxy.middleware";
 import { AiChatProxyMiddleware } from "./middlewares/ai-chat-proxy.middleware";
 import { PaymentProxyMiddleware } from "./middlewares/payment-proxy.middleware";
@@ -98,6 +99,13 @@ export class ProxyModule implements NestModule {
       .forRoutes(
         { path: "vm-events/socket.io", method: RequestMethod.ALL },
         { path: "vm-events/socket.io/*", method: RequestMethod.ALL },
+      );
+
+    consumer
+      .apply(VncProxyMiddleware)
+      .forRoutes(
+        { path: "vnc/socket.io", method: RequestMethod.ALL },
+        { path: "vnc/socket.io/*", method: RequestMethod.ALL },
       );
   }
 }

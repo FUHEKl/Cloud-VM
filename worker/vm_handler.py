@@ -65,6 +65,8 @@ class VMHandler:
         user_id   = data.get("userId")
         vm_username = data.get("vmUsername", "cloudvm")
         vm_password_b64 = data.get("vmPasswordB64", "")
+        gui_callback_url = data.get("guiCallbackUrl", "")
+        gui_callback_token = data.get("guiCallbackToken", "")
 
         # Idempotency: if already instantiated, just resume IP polling
         existing_one_id = get_vm_one_id(vm_id)
@@ -85,6 +87,10 @@ class VMHandler:
                 raise ValueError(f"Invalid vmUsername: {vm_username}")
             if not vm_password_b64:
                 raise ValueError("vmPasswordB64 is required")
+            if not gui_callback_url:
+                raise ValueError("guiCallbackUrl is required")
+            if not gui_callback_token:
+                raise ValueError("guiCallbackToken is required")
 
             escaped_name = _escape_one_template_value(name)
             extra_template = (
@@ -93,6 +99,8 @@ class VMHandler:
                 f"MEMORY={ram_mb}\n"
                 f'VM_USERNAME="{_escape_one_template_value(vm_username)}"\n'
                 f'VM_PASSWORD_B64="{_escape_one_template_value(vm_password_b64)}"\n'
+                f'PLATFORM_CALLBACK_URL="{_escape_one_template_value(gui_callback_url)}"\n'
+                f'GUI_CALLBACK_TOKEN="{_escape_one_template_value(gui_callback_token)}"\n'
             )
 
             one_vm_id = await asyncio.to_thread(

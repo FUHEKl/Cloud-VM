@@ -9,6 +9,7 @@ import { AppModule } from "./app.module";
 import { terminalProxyInstance } from "./proxy/middlewares/terminal-proxy.middleware";
 import { vmEventsProxyInstance } from "./proxy/middlewares/vm-events-proxy.middleware";
 import { aiChatProxyInstance } from "./proxy/middlewares/ai-chat-proxy.middleware";
+import { vncProxyInstance } from "./proxy/middlewares/vnc-proxy.middleware";
 
 const DEFAULT_SECRET_MARKERS = [
   "super-secret-key",
@@ -321,11 +322,14 @@ async function bootstrap() {
   const vmEventsUpgrade = (vmEventsProxyInstance as any).upgrade;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const aiChatUpgrade = (aiChatProxyInstance as any).upgrade;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const vncUpgrade = (vncProxyInstance as any).upgrade;
 
   if (
     typeof terminalUpgrade === "function" ||
     typeof vmEventsUpgrade === "function" ||
-    typeof aiChatUpgrade === "function"
+    typeof aiChatUpgrade === "function" ||
+    typeof vncUpgrade === "function"
   ) {
     httpServer.on("upgrade", (req: any, socket: any, head: any) => {
       void (async () => {
@@ -389,6 +393,8 @@ async function bootstrap() {
           typeof vmEventsUpgrade === "function"
         ) {
           vmEventsUpgrade(req, socket, head);
+        } else if (url.startsWith("/vnc/") && typeof vncUpgrade === "function") {
+          vncUpgrade(req, socket, head);
         } else if (url.startsWith("/ai-chat/") && typeof aiChatUpgrade === "function") {
           aiChatUpgrade(req, socket, head);
         }
@@ -399,6 +405,7 @@ async function bootstrap() {
     if (typeof terminalUpgrade === "function") registeredPaths.push("/terminal/");
     if (typeof vmEventsUpgrade === "function") registeredPaths.push("/vm-events/");
     if (typeof aiChatUpgrade === "function") registeredPaths.push("/ai-chat/");
+    if (typeof vncUpgrade === "function") registeredPaths.push("/vnc/");
 
     console.log(
       `WebSocket upgrade handlers registered for ${registeredPaths.join(", ")}`,

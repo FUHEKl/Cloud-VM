@@ -49,6 +49,9 @@ model VirtualMachine {
   sshPort       Int?     @default(22)
   sshUsername   String?  @default("cloudvm")
   vmPasswordEncrypted String?
+  guiReady      Boolean  @default(false)
+  guiCallbackToken String? @unique
+  guiReadyAt    DateTime?
   stoppedAt     DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

@@ -7,11 +7,13 @@ import {
   ConflictException,
   Logger,
 } from "@nestjs/common";
+import { EventEmitter2 } from "@nestjs/event-emitter";
 import { PrismaService } from "../prisma/prisma.service";
 import { NatsService } from "../nats/nats.service";
 import { CreateVmDto } from "./dto/create-vm.dto";
 import { Prisma, VmStatus } from "@prisma/client";
 import { encryptVmPrivateKey } from "./vm-ssh-key.crypto";
+import { randomUUID } from "crypto";
 
 type InternalQuotaSnapshot = {
   hasActiveSubscription: boolean;
@@ -51,6 +53,7 @@ export class VmService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly nats: NatsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private getUserServiceUrl(): string {
@@ -67,6 +70,14 @@ export class VmService {
       throw new InternalServerErrorException("Missing INTER_SERVICE_SYNC_TOKEN configuration");
     }
     return token;
+  }
+
+  private getPlatformBaseUrl(): string {
+    const raw = (process.env.PLATFORM_URL || "").trim();
+    if (!raw) {
+      throw new InternalServerErrorException("Missing PLATFORM_URL configuration");
+    }
+    return raw.replace(/\/$/, "");
   }
 
   private async fetchWithTimeout(
@@ -143,6 +154,7 @@ export class VmService {
 
   async createVm(dto: CreateVmDto, userId: string, role: string) {
     const isAdmin = role === "ADMIN";
+    const guiCallbackToken = randomUUID();
 
     let remoteQuota: InternalQuotaSnapshot | null = null;
     if (!isAdmin) {
@@ -246,6 +258,7 @@ export class VmService {
             status: VmStatus.PENDING,
             sshUsername: dto.vmUsername,
             vmPasswordEncrypted,
+            guiCallbackToken,
           },
         });
         },
@@ -261,6 +274,9 @@ export class VmService {
       throw error;
     }
 
+    const platformBaseUrl = this.getPlatformBaseUrl();
+    const guiCallbackUrl = `${platformBaseUrl}/api/vms/${vm.id}/gui-ready`;
+
     // Publish to NATS for the worker to create the VM
     await this.nats.publish("vm.create", {
       vmId: vm.id,
@@ -272,6 +288,8 @@ export class VmService {
       userId,
       vmUsername: dto.vmUsername,
       vmPasswordB64: Buffer.from(dto.vmPassword).toString("base64"),
+      guiCallbackUrl,
+      guiCallbackToken,
     });
 
     this.logSecurityEvent("vm.action.queued", {
@@ -283,6 +301,37 @@ export class VmService {
 
     this.logger.log(`VM ${vm.id} created and queued for provisioning`);
     return vm;
+  }
+
+  async markGuiReady(vmId: string, token: string): Promise<void> {
+    const vm = await this.prisma.virtualMachine.findUnique({ where: { id: vmId } });
+
+    if (!vm) {
+      throw new NotFoundException(`Virtual machine ${vmId} not found`);
+    }
+
+    if (!vm.guiCallbackToken || vm.guiCallbackToken !== token) {
+      this.logSecurityEvent("vm.gui.callback.invalid", {
+        vmId,
+        result: "denied",
+      });
+      throw new ForbiddenException("Invalid or already-used GUI callback token");
+    }
+
+    if (vm.guiReady) {
+      return;
+    }
+
+    await this.prisma.virtualMachine.update({
+      where: { id: vmId },
+      data: {
+        guiReady: true,
+        guiReadyAt: new Date(),
+        guiCallbackToken: null,
+      },
+    });
+
+    this.eventEmitter.emit("vm.guiReady", { vmId });
   }
 
   async listVms(
