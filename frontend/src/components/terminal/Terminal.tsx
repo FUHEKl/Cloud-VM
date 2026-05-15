@@ -7,6 +7,7 @@ import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
 import { getGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
 import { resolveVmWsOrigin } from "@/lib/runtime-urls";
+import api from "@/lib/api";
 import "xterm/css/xterm.css";
 
 interface TerminalProps {
@@ -214,88 +215,102 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
         return;
       }
 
-      // Use the configured WS URL (must be the HTTPS origin when behind Nginx).
-      // Socket.IO will automatically upgrade to wss:// when the origin is https://.
-      const wsBase = resolveVmWsOrigin();
-
-      const socket = io(`${wsBase}/terminal`, {
-        transports: ["websocket"],
-        // Nginx proxies /terminal/ → gateway → vm service.
-        // The namespace "/terminal" + path "/terminal/socket.io" are required.
-        path: "/terminal/socket.io",
-        withCredentials: true,
-        reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 500,
-        timeout: 15000,
-        // Force secure transport when page is served over HTTPS
-        secure: typeof window !== "undefined" && window.location.protocol === "https:",
-      });
-      socketRef.current = socket;
-
-      socket.on("connect", () => {
-        term.writeln("\x1b[32m● Connected to terminal server\x1b[0m");
-
-        const pk = getGeneratedVmSshPrivateKey(vmIdRef.current);
-        if (pk) {
-          term.writeln("\x1b[90mUsing generated VM SSH key...\x1b[0m");
-          connect({ privateKey: pk, username: "cloudvm" });
-        } else if (pendingPasswordRef.current) {
-          term.writeln("\x1b[90mUsing password authentication...\x1b[0m");
-          connect({ password: pendingPasswordRef.current, username: "cloudvm" });
-          pendingPasswordRef.current = null;
-        } else {
-          // Edge-case: key was removed after the effect ran
+      // Pre-flight token refresh in async IIFE to ensure JWT is fresh before WebSocket upgrade.
+      // This prevents the token from expiring between HTTP login and WebSocket handshake.
+      (async () => {
+        try {
+          await api.get("/auth/me"); // triggers axios refresh interceptor if token is expired
+        } catch {
           term.writeln(
-            "\x1b[31m✗ No SSH credentials available. Please refresh and try again.\x1b[0m",
+            "\r\n\x1b[31m✗ Session expired. Please log in again.\x1b[0m"
           );
           connectedRef.current = false;
+          return;
         }
-      });
 
-      socket.on("connect_error", (err) => {
-        term.writeln(`\r\n\x1b[31m✗ Connection error: ${err.message}\x1b[0m`);
-        connectedRef.current = false;
-      });
+        // Use the configured WS URL (must be the HTTPS origin when behind Nginx).
+        // Socket.IO will automatically upgrade to wss:// when the origin is https://.
+        const wsBase = resolveVmWsOrigin();
 
-      socket.on("connected", (payload: { message: string }) => {
-        term.writeln(`\x1b[32m● ${payload.message}\x1b[0m`);
-      });
+        const socket = io(`${wsBase}/terminal`, {
+          transports: ["websocket"],
+          // Nginx proxies /terminal/ → gateway → vm service.
+          // The namespace "/terminal" + path "/terminal/socket.io" are required.
+          path: "/terminal/socket.io",
+          withCredentials: true,
+          reconnection: true,
+          reconnectionAttempts: 10,
+          reconnectionDelay: 500,
+          timeout: 15000,
+          // Force secure transport when page is served over HTTPS
+          secure: typeof window !== "undefined" && window.location.protocol === "https:",
+        });
+        socketRef.current = socket;
 
-      socket.on("output", (data: string) => {
-        term.write(data);
-      });
+        socket.on("connect", () => {
+          term.writeln("\x1b[32m● Connected to terminal server\x1b[0m");
 
-      socket.on("error", () => {
-        term.writeln("\r\n\x1b[31m✗ Error: Connection failed. Please retry.\x1b[0m");
-        connectedRef.current = false;
-      });
+          const pk = getGeneratedVmSshPrivateKey(vmIdRef.current);
+          if (pk) {
+            term.writeln("\x1b[90mUsing generated VM SSH key...\x1b[0m");
+            connect({ privateKey: pk, username: "cloudvm" });
+          } else if (pendingPasswordRef.current) {
+            term.writeln("\x1b[90mUsing password authentication...\x1b[0m");
+            connect({ password: pendingPasswordRef.current, username: "cloudvm" });
+            pendingPasswordRef.current = null;
+          } else {
+            // Edge-case: key was removed after the effect ran
+            term.writeln(
+              "\x1b[31m✗ No SSH credentials available. Please refresh and try again.\x1b[0m",
+            );
+            connectedRef.current = false;
+          }
+        });
 
-      socket.on("disconnected", (payload: { message: string }) => {
-        term.writeln(`\r\n\x1b[31m● ${payload.message}\x1b[0m`);
-        connectedRef.current = false;
-        onDisconnectRef.current?.();
-      });
+        socket.on("connect_error", (err) => {
+          term.writeln(`\r\n\x1b[31m✗ Connection error: ${err.message}\x1b[0m`);
+          connectedRef.current = false;
+        });
 
-      socket.on("disconnect", () => {
-        if (connectedRef.current) {
-          term.writeln("\r\n\x1b[31m● Connection lost\x1b[0m");
-        }
-        connectedRef.current = false;
-        onDisconnectRef.current?.();
-      });
+        socket.on("connected", (payload: { message: string }) => {
+          term.writeln(`\x1b[32m● ${payload.message}\x1b[0m`);
+        });
 
-      term.onData((data) => {
-        if (connectedRef.current && socket.connected) {
-          socket.emit("input", data);
-        }
-      });
+        socket.on("output", (data: string) => {
+          term.write(data);
+        });
 
-      term.onResize(({ cols, rows }) => {
-        if (connectedRef.current && socket.connected) {
-          socket.emit("resize", { cols, rows });
-        }
-      });
+        socket.on("error", () => {
+          term.writeln("\r\n\x1b[31m✗ Error: Connection failed. Please retry.\x1b[0m");
+          connectedRef.current = false;
+        });
+
+        socket.on("disconnected", (payload: { message: string }) => {
+          term.writeln(`\r\n\x1b[31m● ${payload.message}\x1b[0m`);
+          connectedRef.current = false;
+          onDisconnectRef.current?.();
+        });
+
+        socket.on("disconnect", () => {
+          if (connectedRef.current) {
+            term.writeln("\r\n\x1b[31m● Connection lost\x1b[0m");
+          }
+          connectedRef.current = false;
+          onDisconnectRef.current?.();
+        });
+
+        term.onData((data) => {
+          if (connectedRef.current && socket.connected) {
+            socket.emit("input", data);
+          }
+        });
+
+        term.onResize(({ cols, rows }) => {
+          if (connectedRef.current && socket.connected) {
+            socket.emit("resize", { cols, rows });
+          }
+        });
+      })();
 
       resizeObserver = new ResizeObserver(() => safeFit());
       resizeObserver.observe(containerRef.current!);

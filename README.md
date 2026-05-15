@@ -98,14 +98,14 @@ See `DB_ISOLATION_PHASED_ROLLOUT.md` for phased migration rationale, boundaries,
 
 ### 4) Access
 
-- Frontend: `http://localhost:3000`
-- Gateway API: `http://localhost:3001`
+- Frontend: `http://127.0.0.1:3000`
+- Gateway API: `http://127.0.0.1:3001`
 
 ### 5) HTTPS for Web Terminal (Required)
 
 The browser terminal uses secure WebSocket when the app runs over HTTPS. For local development, Nginx is exposed on:
 
-- `https://localhost` (port 443)
+- `https://127.0.0.1` (port 443)
 
 At startup, Nginx auto-generates a local self-signed certificate if `nginx/ssl/server.crt` and `nginx/ssl/server.key` are missing.
 

@@ -1400,4 +1400,37 @@ export class AuthService {
     const { password, ...userWithoutPassword } = user;
     return userWithoutPassword;
   }
+
+  async generateWsTicket(userId: string, req: Request) {
+    // Fetch user details for token payload
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, role: true, isActive: true } as any,
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    if (!(user as any).isActive) {
+      throw new UnauthorizedException("User is inactive");
+    }
+
+    // Generate a short-lived WebSocket ticket (30 seconds) with fingerprint binding
+    const fingerprint = buildRequestFingerprint(req);
+    const wsTicket = this.jwtService.sign(
+      {
+        sub: userId,
+        email: (user as any).email,
+        role: (user as any).role,
+        fp: fingerprint,
+        type: "ws-ticket",
+      },
+      {
+        expiresIn: "30s", // Short-lived ticket for WebSocket handshake
+      },
+    );
+
+    return { token: wsTicket };
+  }
 }

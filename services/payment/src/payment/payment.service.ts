@@ -141,12 +141,12 @@ export class PaymentService {
     const fromEnv = process.env.PUBLIC_APP_ORIGIN?.trim();
     if (fromEnv) return fromEnv;
 
-    const firstCors = (process.env.CORS_ORIGIN || "http://localhost:3000")
+    const firstCors = (process.env.CORS_ORIGIN || "http://127.0.0.1:3000")
       .split(",")
       .map((v: string) => v.trim())
       .filter(Boolean)[0];
 
-    return firstCors || "http://localhost:3000";
+    return firstCors || "http://127.0.0.1:3000";
   }
 
   private getUserServiceUrl(): string {

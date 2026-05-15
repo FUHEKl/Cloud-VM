@@ -8,7 +8,7 @@ import { validateJwtSecretsOrThrow } from "./common/security/startup-security.ut
 import { parseCookie } from "./common/security/request-security.util";
 
 function getAllowedOrigins(): string[] {
-  return (process.env.CORS_ORIGIN || "http://localhost:3000")
+  return (process.env.CORS_ORIGIN || "http://127.0.0.1:3000")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);

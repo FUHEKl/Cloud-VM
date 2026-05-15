@@ -53,7 +53,7 @@ services:
       if [ ! -f /etc/nginx/ssl/server.crt ] || [ ! -f /etc/nginx/ssl/server.key ]; then
         echo '[nginx] Generating local self-signed certificate for HTTPS...';
         mkdir -p /etc/nginx/ssl;
-        openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt -subj '/CN=localhost';
+        openssl req -x509 -nodes -newkey rsa:2048 -days 365 -keyout /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt -subj '/CN=127.0.0.1';
       fi;
       nginx -g 'daemon off;'
       "
@@ -107,7 +107,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - CORS_ORIGIN=${CORS_ORIGIN}
-      - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:-http://localhost:3000}
+      - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:-http://127.0.0.1:3000}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
     depends_on:

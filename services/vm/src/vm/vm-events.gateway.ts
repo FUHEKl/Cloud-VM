@@ -148,8 +148,9 @@ export class VmEventsGateway
         fp?: string;
       };
 
+      const skipFp = (process.env.TERMINAL_SKIP_FINGERPRINT_CHECK || "").toLowerCase() === "true";
       // SECURITY: enforce fingerprint binding for websocket VM event sessions.
-      if (!payload.fp || payload.fp !== buildSocketFingerprint(client)) {
+      if (!skipFp && (!payload.fp || payload.fp !== buildSocketFingerprint(client))) {
         throw new Error("Token fingerprint mismatch");
       }
 

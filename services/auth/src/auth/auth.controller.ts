@@ -298,4 +298,10 @@ export class AuthController {
   async me(@CurrentUser() user: { userId: string }) {
     return this.authService.getProfile(user.userId);
   }
+
+  @Get("ws-ticket")
+  @UseGuards(JwtAuthGuard)
+  async getWsTicket(@CurrentUser() user: { userId: string }, @Req() req: Request) {
+    return this.authService.generateWsTicket(user.userId, req);
+  }
 }
