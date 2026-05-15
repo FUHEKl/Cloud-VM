@@ -245,7 +245,7 @@ async def main():
             await msg.ack()
         except Exception as e:
             logger.error("Error handling vm.action: %s", e, exc_info=True)
-            await msg.nak()
+            await msg.ack()
 
     async def handle_vm_delete(msg):
         try:
@@ -261,7 +261,7 @@ async def main():
             await msg.ack()
         except Exception as e:
             logger.error("Error handling vm.delete: %s", e, exc_info=True)
-            await msg.nak()
+            await msg.ack()
 
     await js.subscribe("vm.create", cb=handle_vm_create, config=create_cfg)
     await js.subscribe("vm.action", cb=handle_vm_action, config=action_cfg)
