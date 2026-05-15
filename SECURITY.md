@@ -222,7 +222,7 @@ Implemented:
 - Nginx:
   - `/api/auth/*` limited to `1m`
   - all other `/api/*` limited to `512k`
-  - in `nginx/conf.d/default.conf`
+  - in `nginx/conf.d/default.conf.template`
 - Nest services explicit body limits in `main.ts`:
   - auth `1mb`
   - gateway/user/vm/ai `512kb`

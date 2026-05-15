@@ -7,9 +7,108 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Role {
+  USER
+  ADMIN
+}
+
+enum VmStatus {
+  PENDING
+  RUNNING
+  STOPPED
+  SUSPENDED
+  ERROR
+  DELETED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model User {
+  id                           String                        @id @default(uuid())
+  email                        String                        @unique
+  password                     String
+  firstName                    String
+  lastName                     String
+  role                         Role                          @default(USER)
+  isActive                     Boolean                       @default(true)
+  mfaEnabled                   Boolean                       @default(false)
+  mfaSecret                    String?
+  mfaEnabledAt                 DateTime?
+  mfaRecoveryCodeHashes        String[]                      @default([])
+  mfaRecoveryCodesGeneratedAt   DateTime?
+  studentEmailVerified         Boolean                       @default(false)
+  studentEmailVerifiedAt       DateTime?
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+
+  refreshTokens                RefreshToken[]
+  sshKeys                      SshKey[]
+  virtualMachines              VirtualMachine[]
+  quota                        UserQuota?
+  payments                     Payment[]
+  notifications                Notification[]
+  mfaAuditLogs                 MfaAuditLog[]
+  studentEmailVerifications    StudentEmailVerification[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+model SshKey {
+  id          String   @id @default(uuid())
+  name        String
+  publicKey   String   @db.Text
+  fingerprint String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, fingerprint])
+  @@map("ssh_keys")
+}
+
+model VirtualMachine {
+  id                     String   @id @default(uuid())
+  name                   String
+  oneVmId                Int?
+  status                 VmStatus @default(PENDING)
+  cpu                    Int
+  ramMb                  Int
+  diskGb                 Int
+  ipAddress              String?
+  osTemplate             String
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId                 String?
+  sshHost                String?
+  sshPort                Int?     @default(22)
+  sshUsername            String?  @default("root")
+  sshPrivateKeyEncrypted  String?
+  stoppedAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@map("virtual_machines")
+}
 model UserQuota {
   id        String @id @default(uuid())
   userId    String @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   maxVms    Int    @default(3)
   maxCpu    Int    @default(4)
   maxRamMb  Int    @default(4096)
@@ -21,6 +120,7 @@ model UserQuota {
 model Payment {
   id        String   @id @default(uuid())
   userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   planId    String?
   amount    Float
   currency  String   @default("TND")
@@ -29,6 +129,70 @@ model Payment {
   createdAt DateTime @default(now())
 
   @@map("payments")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}
+
+model MfaAuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  ip        String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("mfa_audit_logs")
+}
+
+model StudentEmailVerification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("student_email_verifications")
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  userId    String
+  title     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@index([userId])
+  @@map("ai_conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String       @db.Text
+  provider       String?
+  model          String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
 }
 
 model StripeWebhookEvent {

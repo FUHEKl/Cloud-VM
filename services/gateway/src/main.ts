@@ -199,10 +199,6 @@ async function bootstrap() {
     }
 
     try {
-      if (wsRateLimitRedis.status !== "ready") {
-        await wsRateLimitRedis.connect();
-      }
-
       const key = `security:gateway:ratelimit:ws-terminal:${ip}`;
       const currentHits = await wsRateLimitRedis.incr(key);
       if (currentHits === 1) {

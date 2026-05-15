@@ -1,20 +1,55 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { randomUUID } from "crypto";
 import { CreatePlanDto } from "./dto/create-plan.dto";
+
+type PlanRecord = {
+  id: string;
+  name: string;
+  maxVms: number;
+  cpu: number;
+  ramMb: number;
+  diskGb: number;
+  priceMonthly: number;
+  isActive: boolean;
+};
+
+function loadInitialPlans(): PlanRecord[] {
+  const catalog = process.env.PLAN_CATALOG_JSON;
+  if (!catalog) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(catalog) as Record<string, { amountDt?: number; quota?: { maxVms?: number; maxCpu?: number; maxRamMb?: number; maxDiskGb?: number } }>;
+    return Object.entries(parsed)
+      .map(([id, cfg]) => ({
+        id,
+        name: `${id[0].toUpperCase()}${id.slice(1)} Plan`,
+        maxVms: cfg.quota?.maxVms ?? 1,
+        cpu: cfg.quota?.maxCpu ?? 1,
+        ramMb: cfg.quota?.maxRamMb ?? 512,
+        diskGb: cfg.quota?.maxDiskGb ?? 5,
+        priceMonthly: cfg.amountDt ?? 0,
+        isActive: true,
+      }))
+      .sort((a, b) => a.priceMonthly - b.priceMonthly);
+  } catch {
+    return [];
+  }
+}
 
 @Injectable()
 export class PlanService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly plans = new Map<string, PlanRecord>(loadInitialPlans().map((plan) => [plan.id, plan]));
 
   async findAll() {
-    return this.prisma.plan.findMany({
-      where: { isActive: true },
-      orderBy: { priceMonthly: "asc" },
-    });
+    return [...this.plans.values()]
+      .filter((plan) => plan.isActive)
+      .sort((a, b) => a.priceMonthly - b.priceMonthly);
   }
 
   async findOne(id: string) {
-    const plan = await this.prisma.plan.findUnique({ where: { id } });
+    const plan = this.plans.get(id);
     if (!plan) {
       throw new NotFoundException("Plan not found");
     }
@@ -22,31 +57,32 @@ export class PlanService {
   }
 
   async create(dto: CreatePlanDto) {
-    return this.prisma.plan.create({
-      data: {
-        name: dto.name,
-        maxVms: dto.maxVms,
-        cpu: dto.cpu,
-        ramMb: dto.ramMb,
-        diskGb: dto.diskGb,
-        priceMonthly: dto.priceMonthly,
-      },
-    });
+    const id = randomUUID();
+    const plan: PlanRecord = {
+      id,
+      name: dto.name,
+      maxVms: dto.maxVms,
+      cpu: dto.cpu,
+      ramMb: dto.ramMb,
+      diskGb: dto.diskGb,
+      priceMonthly: dto.priceMonthly,
+      isActive: true,
+    };
+    this.plans.set(id, plan);
+    return plan;
   }
 
   async update(id: string, dto: Partial<CreatePlanDto>) {
-    await this.findOne(id);
-    return this.prisma.plan.update({
-      where: { id },
-      data: dto,
-    });
+    const plan = await this.findOne(id);
+    const updated = { ...plan, ...dto };
+    this.plans.set(id, updated);
+    return updated;
   }
 
   async deactivate(id: string) {
-    await this.findOne(id);
-    return this.prisma.plan.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    const plan = await this.findOne(id);
+    const updated = { ...plan, isActive: false };
+    this.plans.set(id, updated);
+    return updated;
   }
 }

@@ -225,7 +225,7 @@ async def main():
             await msg.ack()
         except Exception as e:
             logger.error("Error handling vm.create: %s", e, exc_info=True)
-            await msg.nak()
+            await msg.ack()
 
     async def handle_vm_action(msg):
         try:

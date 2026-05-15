@@ -396,7 +396,6 @@ export class VmService {
     const [vms, total] = await Promise.all([
       this.prisma.virtualMachine.findMany({
         where,
-        include: { plan: true },
         orderBy: { createdAt: "desc" },
         skip,
         take: limit,
@@ -418,9 +417,6 @@ export class VmService {
   async getVm(vmId: string, userId: string, role: string) {
     const vm = await this.prisma.virtualMachine.findUnique({
       where: { id: vmId },
-      include: {
-        plan: true,
-      },
     });
 
     if (!vm) {

@@ -21,31 +21,38 @@ enum VmStatus {
   DELETED
 }
 
-model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  password      String
-  firstName     String
-  lastName      String
-  role          Role           @default(USER)
-  isActive      Boolean        @default(true)
-  mfaEnabled    Boolean        @default(false)
-  mfaSecret     String?
-  mfaEnabledAt  DateTime?
-  mfaRecoveryCodeHashes String[] @default([])
-  mfaRecoveryCodesGeneratedAt DateTime?
-  studentEmailVerified        Boolean   @default(false)
-  studentEmailVerifiedAt      DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
 
-  refreshTokens RefreshToken[]
-  sshKeys       SshKey[]
-  virtualMachines VirtualMachine[]
-  quota         UserQuota?
-  notifications Notification[]
-  mfaAuditLogs  MfaAuditLog[]
-  studentEmailVerifications StudentEmailVerification[]
+model User {
+  id                           String                        @id @default(uuid())
+  email                        String                        @unique
+  password                     String
+  firstName                    String
+  lastName                     String
+  role                         Role                          @default(USER)
+  isActive                     Boolean                       @default(true)
+  mfaEnabled                   Boolean                       @default(false)
+  mfaSecret                    String?
+  mfaEnabledAt                 DateTime?
+  mfaRecoveryCodeHashes        String[]                      @default([])
+  mfaRecoveryCodesGeneratedAt   DateTime?
+  studentEmailVerified         Boolean                       @default(false)
+  studentEmailVerifiedAt       DateTime?
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+
+  refreshTokens                RefreshToken[]
+  sshKeys                      SshKey[]
+  virtualMachines              VirtualMachine[]
+  quota                        UserQuota?
+  payments                     Payment[]
+  notifications                Notification[]
+  mfaAuditLogs                 MfaAuditLog[]
+  studentEmailVerifications    StudentEmailVerification[]
 
   @@map("users")
 }
@@ -75,29 +82,29 @@ model SshKey {
 }
 
 model VirtualMachine {
-  id            String   @id @default(uuid())
-  name          String
-  oneVmId       Int?
-  status        VmStatus @default(PENDING)
-  cpu           Int
-  ramMb         Int
-  diskGb        Int
-  ipAddress     String?
-  osTemplate    String
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planId        String?
-  sshHost       String?
-  sshPort       Int?     @default(22)
-  sshUsername   String?  @default("root")
-  stoppedAt     DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  name                   String
+  oneVmId                Int?
+  status                 VmStatus @default(PENDING)
+  cpu                    Int
+  ramMb                  Int
+  diskGb                 Int
+  ipAddress              String?
+  osTemplate             String
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId                 String?
+  sshHost                String?
+  sshPort                Int?     @default(22)
+  sshUsername            String?  @default("root")
+  sshPrivateKeyEncrypted  String?
+  stoppedAt              DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   @@unique([userId, name])
   @@map("virtual_machines")
 }
-
 model UserQuota {
   id        String @id @default(uuid())
   userId    String @unique
@@ -108,6 +115,20 @@ model UserQuota {
   maxDiskGb Int    @default(50)
 
   @@map("user_quotas")
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId    String?
+  amount    Float
+  currency  String   @default("TND")
+  status    String   @default("pending")
+  method    String?
+  createdAt DateTime @default(now())
+
+  @@map("payments")
 }
 
 model Notification {
@@ -146,4 +167,39 @@ model StudentEmailVerification {
   createdAt DateTime @default(now())
 
   @@map("student_email_verifications")
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  userId    String
+  title     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@index([userId])
+  @@map("ai_conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String       @db.Text
+  provider       String?
+  model          String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model StripeWebhookEvent {
+  id        String   @id @default(uuid())
+  eventId   String   @unique
+  eventType String
+  createdAt DateTime @default(now())
+
+  @@map("stripe_webhook_events")
 }

@@ -142,14 +142,22 @@ class VMHandler:
         user_id   = data.get("userId")
         generated_ssh_public_key = data.get("sshPublicKey")
 
-        # Idempotency: if already instantiated, just resume IP polling
-        existing_one_id = get_vm_one_id(vm_id)
-        if existing_one_id is not None:
-            logger.info(f"VM {vm_id} already has oneVmId={existing_one_id}, resuming IP polling")
-            asyncio.create_task(self._wait_for_ip_and_update(vm_id, existing_one_id, nats_client))
-            return
+        lock_key = f"vm:create:lock:{vm_id}"
+        lock_acquired = False
 
         try:
+            lock_acquired = bool(self.redis.set(lock_key, "1", nx=True, ex=300))
+            if not lock_acquired:
+                logger.info("VM %s already being created — skipping duplicate", vm_id)
+                return
+
+            # Idempotency: if already instantiated, just resume IP polling
+            existing_one_id = get_vm_one_id(vm_id)
+            if existing_one_id is not None:
+                logger.info(f"VM {vm_id} already has oneVmId={existing_one_id}, resuming IP polling")
+                asyncio.create_task(self._wait_for_ip_and_update(vm_id, existing_one_id, nats_client))
+                return
+
             if re.fullmatch(r"[a-zA-Z0-9-]{1,64}", name) is None:
                 raise ValueError("VM name contains invalid chars")
 
@@ -227,6 +235,12 @@ class VMHandler:
                 "ERROR",
                 {"error": "VM provisioning failed. Contact support."},
             )
+        finally:
+            if lock_acquired:
+                try:
+                    self.redis.delete(lock_key)
+                except Exception as e:
+                    logger.warning("Failed to release VM create lock for %s: %s", vm_id, e)
 
     async def vm_action(self, data: dict, nats_client) -> None:
         vm_id     = data["vmId"]
