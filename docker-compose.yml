@@ -101,13 +101,13 @@ services:
     expose:
       - "3005"
     environment:
+      - CORS_ORIGIN=${CORS_ORIGIN}
       - DATABASE_URL=${PAYMENT_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
       - PLAN_CATALOG_JSON=${PLAN_CATALOG_JSON}
       - USER_SERVICE_URL=http://user:3003
       - INTER_SERVICE_SYNC_TOKEN=${INTER_SERVICE_SYNC_TOKEN}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - CORS_ORIGIN=${CORS_ORIGIN}
       - PUBLIC_APP_ORIGIN=${PUBLIC_APP_ORIGIN:-http://127.0.0.1:3000}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
@@ -124,6 +124,7 @@ services:
     expose:
       - "3002"
     environment:
+      - CORS_ORIGIN=${CORS_ORIGIN}
       - DATABASE_URL=${AUTH_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
       - USER_SERVICE_URL=http://user:3003
       - INTER_SERVICE_SYNC_TOKEN=${INTER_SERVICE_SYNC_TOKEN}
@@ -149,6 +150,7 @@ services:
     expose:
       - "3003"
     environment:
+      - CORS_ORIGIN=${CORS_ORIGIN}
       - DATABASE_URL=${USER_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
       - PLAN_CATALOG_JSON=${PLAN_CATALOG_JSON}
       - INTER_SERVICE_SYNC_TOKEN=${INTER_SERVICE_SYNC_TOKEN}
@@ -175,6 +177,8 @@ services:
     expose:
       - "3004"
     environment:
+      - CORS_ORIGIN=${CORS_ORIGIN}
+      - TERMINAL_SKIP_FINGERPRINT_CHECK=${TERMINAL_SKIP_FINGERPRINT_CHECK}
       - DATABASE_URL=${VM_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
       - VM_SSH_KEY_SECRET=${VM_SSH_KEY_SECRET}
       - JWT_SECRET=${JWT_SECRET}
@@ -182,7 +186,6 @@ services:
       - NATS_URL=nats://${NATS_USER:-cloudvm_nats}:${NATS_PASSWORD}@nats:4222
       - REDIS_HOST=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - CORS_ORIGIN=${CORS_ORIGIN}
       - ONE_XMLRPC=${ONE_XMLRPC:-}
       - ONE_USERNAME=${ONE_USERNAME:-}
       - ONE_PASSWORD=${ONE_PASSWORD:-}
@@ -212,10 +215,10 @@ services:
     expose:
       - "3006"
     environment:
+      - CORS_ORIGIN=${CORS_ORIGIN}
       - DATABASE_URL=${AI_DATABASE_URL:-postgresql://${POSTGRES_USER:-cloudvm}:${POSTGRES_PASSWORD:-cloudvm_secret}@postgres:5432/${POSTGRES_DB:-cloudvm}}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - CORS_ORIGIN=${CORS_ORIGIN}
       - VM_SERVICE_URL=http://vm:3004
       - USER_SERVICE_URL=http://user:3003
       - AI_RATE_LIMIT_PER_MIN=${AI_RATE_LIMIT_PER_MIN:-20}

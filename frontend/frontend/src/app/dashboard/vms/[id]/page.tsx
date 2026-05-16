@@ -7,7 +7,6 @@ import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
 import type { VirtualMachine } from "@/types";
 import { useVmSocket } from "@/hooks/useVmSocket";
-import GuiButton from "@/components/GuiButton";
 
 const Terminal = dynamic(() => import("@/components/terminal/Terminal"), {
   ssr: false,
@@ -184,9 +183,6 @@ export default function VmDetailPage() {
             >
               {showTerminal ? "✕ Close Terminal" : "⚡ Open Terminal"}
             </button>
-          )}
-          {isRunning && (
-            <GuiButton vmId={vm.id} guiReady={isRunning} />
           )}
           {isRunning && (
             <>

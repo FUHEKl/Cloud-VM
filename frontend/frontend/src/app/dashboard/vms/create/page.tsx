@@ -37,8 +37,6 @@ export default function CreateVmPage() {
     ramMb: 1024,
     diskGb: 10,
     planId: "",
-    vmUsername: "",
-    vmPassword: "",
   });
   const [useCustom, setUseCustom] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -147,8 +145,6 @@ export default function CreateVmPage() {
             ramMb: form.ramMb,
             diskGb: form.diskGb,
             sshPublicKey: selectedPublicKey,
-            vmUsername: form.vmUsername || "cloudvm",
-            vmPassword: form.vmPassword || "cloudvm123",
           }
         : {
             name: form.name,
@@ -158,8 +154,6 @@ export default function CreateVmPage() {
             ramMb: selectedPlan?.ramMb || 1024,
             diskGb: selectedPlan?.diskGb || 10,
             sshPublicKey: selectedPublicKey,
-            vmUsername: form.vmUsername || "cloudvm",
-            vmPassword: form.vmPassword || "cloudvm123",
           };
 
       const { data: createdVm } = await api.post("/vms", body);
@@ -452,42 +446,6 @@ export default function CreateVmPage() {
                 )}
               </div>
             )}
-          </div>
-
-          {/* VM Credentials */}
-          <div className="cyber-card">
-            <h3 className="text-lg font-semibold text-cyber-text mb-4">
-              VM Credentials (Optional)
-            </h3>
-            <p className="text-sm text-cyber-text-dim mb-4">
-              Set custom username and password for VNC/GUI access. Defaults: cloudvm / cloudvm123
-            </p>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
-                  Username
-                </label>
-                <input
-                  type="text"
-                  className="cyber-input w-full"
-                  placeholder="cloudvm"
-                  value={form.vmUsername}
-                  onChange={(e) => setForm({ ...form, vmUsername: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  className="cyber-input w-full"
-                  placeholder="cloudvm123"
-                  value={form.vmPassword}
-                  onChange={(e) => setForm({ ...form, vmPassword: e.target.value })}
-                />
-              </div>
-            </div>
           </div>
 
           {/* Submit */}

@@ -141,6 +141,8 @@ class VMHandler:
         os_template = data["osTemplate"]
         user_id   = data.get("userId")
         generated_ssh_public_key = data.get("sshPublicKey")
+        vm_username = data.get("vmUsername", "cloudvm")
+        vm_password = data.get("vmPassword", "cloudvm123")
 
         lock_key = f"vm:create:lock:{vm_id}"
         lock_acquired = False
@@ -213,6 +215,18 @@ class VMHandler:
                 keys_for_template = ssh_keys_str.replace("\r", "").replace("\n", "\\n")
                 escaped_ssh_keys = _escape_one_template_value(keys_for_template)
                 extra_template += f'SSH_PUBLIC_KEY="{escaped_ssh_keys}"\n'
+
+            # Add OpenNebula CONTEXT with network, SSH keys, and VM credentials
+            escaped_vm_username = _escape_one_template_value(vm_username)
+            escaped_vm_password = _escape_one_template_value(vm_password)
+            extra_template += (
+                f'CONTEXT = [\n'
+                f'  NETWORK = "YES",\n'
+                f'  SSH_PUBLIC_KEY = "$SSH_PUBLIC_KEY",\n'
+                f'  VM_USERNAME = "{escaped_vm_username}",\n'
+                f'  VM_PASSWORD = "{escaped_vm_password}"\n'
+                f']\n'
+            )
 
             one_vm_id = await asyncio.to_thread(
                 self.one.template.instantiate, template_id, name, False, extra_template

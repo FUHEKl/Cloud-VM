@@ -48,4 +48,17 @@ export class CreateVmDto {
   @MaxLength(4096)
   @Matches(/^(ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256)\s+\S+/)
   sshPublicKey?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(64)
+  @Matches(/^[a-zA-Z0-9_-]*$/)
+  vmUsername?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(128)
+  vmPassword?: string;
 }

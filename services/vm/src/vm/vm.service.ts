@@ -317,6 +317,8 @@ export class VmService {
             status: VmStatus.PENDING,
             sshUsername: "cloudvm",
             sshPrivateKeyEncrypted: encryptedPrivateKey,
+            vmUsername: dto.vmUsername || "cloudvm",
+            vmPassword: dto.vmPassword || "cloudvm123",
           },
         });
         },
@@ -345,6 +347,8 @@ export class VmService {
       osTemplate: vm.osTemplate,
       userId,
       sshPublicKey: sshPublicKeyForVm,
+      vmUsername: vm.vmUsername || "cloudvm",
+      vmPassword: vm.vmPassword || "cloudvm123",
     });
 
     this.logSecurityEvent("vm.action.queued", {
