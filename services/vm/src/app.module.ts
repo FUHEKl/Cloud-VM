@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { PrismaModule } from "./prisma/prisma.module";
 import { VmModule } from "./vm/vm.module";
 import { TerminalModule } from "./terminal/terminal.module";
+import { VncModule } from "./vnc/vnc.module";
 import { PlanModule } from "./plan/plan.module";
 import { NatsModule } from "./nats/nats.module";
 import { JwtStrategy } from "./common/strategies/jwt.strategy";
@@ -22,6 +23,7 @@ import { JwtStrategy } from "./common/strategies/jwt.strategy";
     NatsModule,
     VmModule,
     TerminalModule,
+    VncModule,
     PlanModule,
   ],
   providers: [

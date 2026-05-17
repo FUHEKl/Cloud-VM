@@ -98,8 +98,6 @@ model VirtualMachine {
   sshPort                Int?     @default(22)
   sshUsername            String?  @default("root")
   sshPrivateKeyEncrypted  String?
-  vmUsername             String?  @default("cloudvm")
-  vmPassword             String?
   stoppedAt              DateTime?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt

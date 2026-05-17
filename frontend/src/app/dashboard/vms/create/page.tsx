@@ -37,7 +37,7 @@ export default function CreateVmPage() {
     ramMb: 1024,
     diskGb: 10,
     planId: "",
-    vmUsername: "",
+    vmUsername: "cloudvm",
     vmPassword: "",
   });
   const [useCustom, setUseCustom] = useState(false);
@@ -146,9 +146,9 @@ export default function CreateVmPage() {
             cpu: form.cpu,
             ramMb: form.ramMb,
             diskGb: form.diskGb,
+            vmUsername: form.vmUsername,
+            vmPassword: form.vmPassword || undefined,
             sshPublicKey: selectedPublicKey,
-            vmUsername: form.vmUsername || "cloudvm",
-            vmPassword: form.vmPassword || "cloudvm123",
           }
         : {
             name: form.name,
@@ -157,9 +157,9 @@ export default function CreateVmPage() {
             cpu: selectedPlan?.cpu || 1,
             ramMb: selectedPlan?.ramMb || 1024,
             diskGb: selectedPlan?.diskGb || 10,
+            vmUsername: form.vmUsername,
+            vmPassword: form.vmPassword || undefined,
             sshPublicKey: selectedPublicKey,
-            vmUsername: form.vmUsername || "cloudvm",
-            vmPassword: form.vmPassword || "cloudvm123",
           };
 
       const { data: createdVm } = await api.post("/vms", body);
@@ -454,25 +454,25 @@ export default function CreateVmPage() {
             )}
           </div>
 
-          {/* VM Credentials */}
-          <div className="cyber-card">
-            <h3 className="text-lg font-semibold text-cyber-text mb-4">
-              VM Credentials (Optional)
+          {/* VM Login Credentials */}
+          <div className="cyber-card space-y-4">
+            <h3 className="text-lg font-semibold text-cyber-text">
+              VM Login Credentials
             </h3>
-            <p className="text-sm text-cyber-text-dim mb-4">
-              Set custom username and password for VNC/GUI access. Defaults: cloudvm / cloudvm123
-            </p>
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-cyber-text-dim mb-1.5">
                   Username
                 </label>
                 <input
                   type="text"
-                  className="cyber-input w-full"
+                  className="cyber-input"
                   placeholder="cloudvm"
                   value={form.vmUsername}
-                  onChange={(e) => setForm({ ...form, vmUsername: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, vmUsername: e.target.value })
+                  }
+                  required
                 />
               </div>
               <div>
@@ -481,13 +481,19 @@ export default function CreateVmPage() {
                 </label>
                 <input
                   type="password"
-                  className="cyber-input w-full"
-                  placeholder="cloudvm123"
+                  className="cyber-input"
+                  placeholder="Set a login password"
                   value={form.vmPassword}
-                  onChange={(e) => setForm({ ...form, vmPassword: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, vmPassword: e.target.value })
+                  }
                 />
               </div>
             </div>
+            <p className="text-xs text-cyber-text-dim">
+              These credentials are used by the VM init script to create the login
+              account for SSH and the GUI connection.
+            </p>
           </div>
 
           {/* Submit */}

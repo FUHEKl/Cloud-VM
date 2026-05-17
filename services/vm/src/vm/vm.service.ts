@@ -315,10 +315,8 @@ export class VmService {
             userId,
             planId: dto.planId || null,
             status: VmStatus.PENDING,
-            sshUsername: "cloudvm",
+            sshUsername: dto.vmUsername?.trim() || "cloudvm",
             sshPrivateKeyEncrypted: encryptedPrivateKey,
-            vmUsername: dto.vmUsername || "cloudvm",
-            vmPassword: dto.vmPassword || "cloudvm123",
           },
         });
         },
@@ -346,9 +344,9 @@ export class VmService {
       diskGb: vm.diskGb,
       osTemplate: vm.osTemplate,
       userId,
+      vmUsername: vm.sshUsername,
+      vmPassword: dto.vmPassword ?? undefined,
       sshPublicKey: sshPublicKeyForVm,
-      vmUsername: vm.vmUsername || "cloudvm",
-      vmPassword: vm.vmPassword || "cloudvm123",
     });
 
     this.logSecurityEvent("vm.action.queued", {

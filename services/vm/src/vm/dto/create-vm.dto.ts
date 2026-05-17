@@ -52,8 +52,8 @@ export class CreateVmDto {
   @IsOptional()
   @IsString()
   @MinLength(1)
-  @MaxLength(64)
-  @Matches(/^[a-zA-Z0-9_-]*$/)
+  @MaxLength(32)
+  @Matches(/^[a-zA-Z0-9_-]+$/)
   vmUsername?: string;
 
   @IsOptional()

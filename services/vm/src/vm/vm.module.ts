@@ -3,7 +3,6 @@ import { JwtModule } from "@nestjs/jwt";
 import { VmController } from "./vm.controller";
 import { VmService } from "./vm.service";
 import { VmEventsGateway } from "./vm-events.gateway";
-import { VncGateway } from "./vnc.gateway";
 
 @Module({
   imports: [
@@ -12,7 +11,7 @@ import { VncGateway } from "./vnc.gateway";
     }),
   ],
   controllers: [VmController],
-  providers: [VmService, VmEventsGateway, VncGateway],
+  providers: [VmService, VmEventsGateway],
   exports: [VmService],
 })
 export class VmModule {}

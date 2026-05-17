@@ -4,12 +4,20 @@ import logging
 import os
 import unicodedata
 import re
+from typing import Any, cast
 
 import pyone
+import requests.exceptions
 import redis as redis_lib
 
 from config import ONE_XMLRPC, ONE_USERNAME, ONE_PASSWORD, ONE_IP_OFFSET
-from db_updater import update_vm_status, get_vm_one_id, get_user_ssh_keys, delete_vm_record
+from db_updater import (
+    update_vm_status,
+    get_vm_one_id,
+    get_user_ssh_keys,
+    delete_vm_record,
+    get_all_active_vms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +133,25 @@ class VMHandler:
             session=f"{ONE_USERNAME}:{ONE_PASSWORD}",
         )
         self.redis = redis_client
-        self._template_cache = None
+        self._template_cache: Any | None = None
         logger.info(f"Connected to OpenNebula at {ONE_XMLRPC}")
+
+    async def load_templates(self) -> None:
+        """Load (or reload) the OpenNebula template pool into cache."""
+        try:
+            template_cache = cast(Any, await asyncio.to_thread(
+                self.one.templatepool.info, -1, -1, -1
+            ))
+            self._template_cache = template_cache
+            template_names = [t.NAME for t in template_cache.VMTEMPLATE]
+            logger.info(
+                "Loaded %d template(s) from OpenNebula: %s",
+                len(template_names),
+                template_names,
+            )
+        except Exception as e:
+            logger.error("Failed to load OpenNebula templates: %s", e)
+            self._template_cache = None
 
     # ------------------------------------------------------------------
     # Public handlers
@@ -142,7 +167,15 @@ class VMHandler:
         user_id   = data.get("userId")
         generated_ssh_public_key = data.get("sshPublicKey")
         vm_username = data.get("vmUsername", "cloudvm")
-        vm_password = data.get("vmPassword", "cloudvm123")
+        vm_password = data.get("vmPassword")
+
+        if not isinstance(vm_username, str) or not vm_username.strip():
+            vm_username = "cloudvm"
+        vm_username = vm_username.strip()
+        if not isinstance(vm_password, str) or not vm_password.strip():
+            vm_password = None
+        else:
+            vm_password = vm_password.strip()
 
         lock_key = f"vm:create:lock:{vm_id}"
         lock_acquired = False
@@ -157,7 +190,7 @@ class VMHandler:
             existing_one_id = get_vm_one_id(vm_id)
             if existing_one_id is not None:
                 logger.info(f"VM {vm_id} already has oneVmId={existing_one_id}, resuming IP polling")
-                asyncio.create_task(self._wait_for_ip_and_update(vm_id, existing_one_id, nats_client))
+                asyncio.create_task(self._wait_for_ip_and_update(vm_id, existing_one_id, nats_client, ssh_username=vm_username))
                 return
 
             if re.fullmatch(r"[a-zA-Z0-9-]{1,64}", name) is None:
@@ -200,7 +233,9 @@ class VMHandler:
             )
 
             escaped_name = _escape_one_template_value(name)
-            extra_template = (
+
+            # Base attributes always included (no credentials)
+            extra_template_base = (
                 f'NAME="{escaped_name}"\n'
                 f"CPU={cpu}\n"
                 f"VCPU={cpu}\n"
@@ -214,30 +249,58 @@ class VMHandler:
                 # single-line and parse-safe in OpenNebula template text.
                 keys_for_template = ssh_keys_str.replace("\r", "").replace("\n", "\\n")
                 escaped_ssh_keys = _escape_one_template_value(keys_for_template)
-                extra_template += f'SSH_PUBLIC_KEY="{escaped_ssh_keys}"\n'
+                extra_template_base += f'SSH_PUBLIC_KEY="{escaped_ssh_keys}"\n'
 
-            # Add OpenNebula CONTEXT with network, SSH keys, and VM credentials
-            escaped_vm_username = _escape_one_template_value(vm_username)
-            escaped_vm_password = _escape_one_template_value(vm_password)
-            extra_template += (
-                f'CONTEXT = [\n'
-                f'  NETWORK = "YES",\n'
-                f'  SSH_PUBLIC_KEY = "$SSH_PUBLIC_KEY",\n'
-                f'  VM_USERNAME = "{escaped_vm_username}",\n'
-                f'  VM_PASSWORD = "{escaped_vm_password}"\n'
-                f']\n'
-            )
+            # Credential attributes — only appended when values are present
+            creds_snippet = f'USERNAME="{_escape_one_template_value(vm_username)}"\n'
+            if vm_password:
+                creds_snippet += f'PASSWORD="{_escape_one_template_value(vm_password)}"\n'
 
-            one_vm_id = await asyncio.to_thread(
-                self.one.template.instantiate, template_id, name, False, extra_template
-            )
-            logger.info(f"Instantiated VM {one_vm_id} from template {template_id}")
+            extra_template_with_creds = extra_template_base + creds_snippet
+
+            # Try instantiating with credentials first. If OpenNebula rejects
+            # the template (e.g. because the template's CONTEXT has no
+            # USERNAME/PASSWORD placeholders), fall back silently to the base
+            # template so the VM still gets created without them.
+            one_vm_id = None
+            try:
+                one_vm_id = await asyncio.to_thread(
+                    self.one.template.instantiate,
+                    template_id,
+                    name,
+                    False,
+                    extra_template_with_creds,
+                )
+                logger.info(
+                    "Instantiated VM %s from template %s (with credentials)",
+                    one_vm_id,
+                    template_id,
+                )
+            except Exception as cred_exc:
+                logger.warning(
+                    "VM %s: instantiation with credentials failed (%s) — "
+                    "retrying without USERNAME/PASSWORD",
+                    vm_id,
+                    cred_exc,
+                )
+                one_vm_id = await asyncio.to_thread(
+                    self.one.template.instantiate,
+                    template_id,
+                    name,
+                    False,
+                    extra_template_base,
+                )
+                logger.info(
+                    "Instantiated VM %s from template %s (without credentials)",
+                    one_vm_id,
+                    template_id,
+                )
 
             update_vm_status(vm_id, "PENDING", one_vm_id=one_vm_id)
             self._cache_vm_status(vm_id, "PENDING")
             await self._publish_status(nats_client, vm_id, "PENDING", {"oneVmId": one_vm_id})
 
-            asyncio.create_task(self._wait_for_ip_and_update(vm_id, one_vm_id, nats_client))
+            asyncio.create_task(self._wait_for_ip_and_update(vm_id, one_vm_id, nats_client, ssh_username=vm_username))
 
         except Exception as e:
             logger.error(f"Error creating VM {vm_id}: {e}", exc_info=True)
@@ -285,7 +348,44 @@ class VMHandler:
                 "oneVmId": one_vm_id,
                 "action": action,
             })
+        except requests.exceptions.ConnectionError as e:
+            logger.error(
+                "OpenNebula unreachable during %s on VM %s — keeping current status: %s",
+                action,
+                vm_id,
+                e,
+            )
+            raise
         except Exception as e:
+            error_msg = str(e)
+
+            # OpenNebula says the VM is already in a valid state.
+            # Sync DB instead of turning a harmless mismatch into ERROR.
+            if "not available for state" in error_msg:
+                try:
+                    one_vm = await asyncio.to_thread(self.one.vm.info, one_vm_id)
+                    if getattr(one_vm, "STATE", None) == 3 and getattr(one_vm, "LCM_STATE", None) == 3:
+                        correct_status = "RUNNING"
+                    elif getattr(one_vm, "STATE", None) in (4, 8):
+                        correct_status = "STOPPED"
+                    else:
+                        correct_status = "ERROR"
+
+                    logger.warning(
+                        "VM %s state mismatch — DB/action invalid but OpenNebula is fine. Auto-correcting DB to %s",
+                        vm_id,
+                        correct_status,
+                    )
+                    update_vm_status(vm_id, correct_status)
+                    self._cache_vm_status(vm_id, correct_status)
+                    await self._publish_status(nats_client, vm_id, correct_status, {"oneVmId": one_vm_id})
+                except Exception as sync_err:
+                    logger.error(f"Failed to sync real VM state for {vm_id}: {sync_err}")
+                    update_vm_status(vm_id, "ERROR")
+                    self._cache_vm_status(vm_id, "ERROR")
+                    await self._publish_status(nats_client, vm_id, "ERROR", {"oneVmId": one_vm_id})
+                return
+
             logger.error(f"Error executing {action} on VM {vm_id}: {e}", exc_info=True)
             update_vm_status(vm_id, "ERROR")
             self._cache_vm_status(vm_id, "ERROR")
@@ -340,16 +440,72 @@ class VMHandler:
         except Exception as e:
             logger.error(f"Reconciliation error: {e}", exc_info=True)
 
-    async def load_templates(self) -> None:
-        try:
-            self._template_cache = await asyncio.to_thread(
-                self.one.templatepool.info, -2, -1, -1
-            )
-            count = len(self._template_cache.VMTEMPLATE)
-            logger.info(f"Loaded {count} OpenNebula templates")
-        except Exception as e:
-            logger.error(f"Failed to load templates: {e}")
-            self._template_cache = None
+    async def sync_all_vm_states(self, nats_client) -> None:
+        """
+        Periodically compare DB status vs real OpenNebula state.
+        Fixes any mismatch automatically — e.g. DB says ERROR but
+        OpenNebula says RUNNING.
+        """
+        if self._template_cache is None:
+            return  # OpenNebula not connected, skip
+
+        vms = get_all_active_vms()
+        if not vms:
+            return
+
+        fixed = 0
+        for vm in vms:
+            vm_id = vm["vmId"]
+            one_id = vm["oneVmId"]
+            db_status = vm["dbStatus"]
+
+            try:
+                one_vm = await asyncio.to_thread(self.one.vm.info, one_id)
+
+                one_state = getattr(one_vm, "STATE", None)
+                one_lcm_state = getattr(one_vm, "LCM_STATE", None)
+
+                if one_state is None or one_lcm_state is None:
+                    continue
+
+                # Correct OpenNebula state mapping
+                if one_state == 3 and one_lcm_state == 3:
+                    real_status = "RUNNING"
+                elif one_state in (4, 8):
+                    real_status = "STOPPED"
+                elif one_state == 6:
+                    real_status = "DELETED"
+                else:
+                    continue
+
+                if real_status != db_status:
+                    logger.warning(
+                        "VM %s state mismatch — DB: %s | OpenNebula: %s — auto-fixing",
+                        vm_id,
+                        db_status,
+                        real_status,
+                    )
+                    update_vm_status(vm_id, real_status)
+
+                    try:
+                        await nats_client.publish(
+                            "vm.status.update",
+                            json.dumps({
+                                "vmId": vm_id,
+                                "status": real_status,
+                                "source": "auto-sync",
+                            }).encode(),
+                        )
+                    except Exception:
+                        pass
+
+                    fixed += 1
+
+            except Exception as e:
+                logger.debug("Could not sync VM %s (ONE %s): %s", vm_id, one_id, e)
+
+        if fixed > 0:
+            logger.info("Auto-sync fixed %d VM(s) with mismatched state", fixed)
 
     async def get_template_list(self) -> list:
         if self._template_cache is None:
@@ -389,6 +545,7 @@ class VMHandler:
         vm_id: str,
         one_vm_id: int,
         nats_client,
+        ssh_username: str = None,
         poll_interval: int = 8,
         timeout: int = 300,
     ) -> None:
@@ -434,7 +591,7 @@ class VMHandler:
                             ip_address=ip,
                             one_vm_id=one_vm_id,
                             ssh_host=ip,
-                            ssh_username="cloudvm",
+                            ssh_username=ssh_username,
                         )
                         self._cache_vm_status(vm_id, "RUNNING", ip=ip)
                         await self._publish_status(nats_client, vm_id, "RUNNING", {

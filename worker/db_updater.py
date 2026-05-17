@@ -136,3 +136,20 @@ def delete_vm_record(vm_id: str) -> None:
     except Exception as e:
         logger.error(f"Error deleting VM {vm_id} from database: {e}", exc_info=True)
         raise
+
+
+def get_all_active_vms() -> list:
+    """Return all non-deleted VMs that have a oneVmId — used for periodic state sync."""
+    try:
+        with _connection_cursor() as (conn, cur):
+            cur.execute(
+                'SELECT id, "oneVmId", status FROM virtual_machines '
+                "WHERE status != 'DELETED' AND \"oneVmId\" IS NOT NULL"
+            )
+            return [
+                {"vmId": row[0], "oneVmId": row[1], "dbStatus": row[2]}
+                for row in cur.fetchall()
+            ]
+    except Exception as e:
+        logger.error(f"Error fetching active VMs for sync: {e}")
+        return []

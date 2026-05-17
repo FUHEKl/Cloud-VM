@@ -41,9 +41,9 @@ export function useVncSocket({
     socket.on("vnc:close", onClose);
     socket.on("vnc:error", (msg: string) => onError(msg));
 
-    socket.on("vnc:data", (data: ArrayBuffer | Buffer) => {
-      const buffer = data instanceof ArrayBuffer ? data : data.buffer;
-      onData(new Uint8Array(buffer));
+    socket.on("vnc:data", (data: ArrayBuffer | Uint8Array) => {
+      const buffer = data instanceof Uint8Array ? data : new Uint8Array(data);
+      onData(buffer);
     });
 
     return () => {

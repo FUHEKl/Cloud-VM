@@ -7,9 +7,23 @@ import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
 import type { VirtualMachine } from "@/types";
 import { useVmSocket } from "@/hooks/useVmSocket";
-import GuiButton from "@/components/GuiButton";
 
-const Terminal = dynamic(() => import("@/components/terminal/Terminal"), {
+type TerminalProps = {
+  vmId: string;
+  ipAddress: string;
+  onDisconnect?: () => void;
+};
+
+type GuiButtonProps = {
+  vmId: string;
+  guiReady: boolean;
+};
+
+const Terminal = dynamic<TerminalProps>(() => import("../../../../components/terminal/Terminal"), {
+  ssr: false,
+});
+
+const GuiButton = dynamic<GuiButtonProps>(() => import("../../../../components/GuiButton"), {
   ssr: false,
 });
 

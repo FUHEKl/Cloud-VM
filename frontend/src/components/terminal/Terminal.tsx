@@ -5,7 +5,6 @@ import { io, Socket } from "socket.io-client";
 import { Terminal as XTerminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
 import { WebLinksAddon } from "xterm-addon-web-links";
-import { getGeneratedVmSshPrivateKey } from "@/lib/vmSshKeyStore";
 import { resolveVmWsOrigin } from "@/lib/runtime-urls";
 import api from "@/lib/api";
 import "xterm/css/xterm.css";
@@ -16,36 +15,34 @@ interface TerminalProps {
   onDisconnect?: () => void;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Password prompt overlay — shown when no generated SSH private key is found
-// in localStorage (cleared browser data, different device, etc.).
-// ──────────────────────────────────────────────────────────────────────────────
-function PasswordPrompt({
+function CredentialsPrompt({
   ipAddress,
   onConnect,
 }: {
   ipAddress: string;
-  onConnect: (password: string) => void;
+  onConnect: (username: string, password: string) => void;
 }) {
+  const [username, setUsername] = useState("cloudvm");
   const [password, setPassword] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    passwordRef.current?.focus();
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (password.trim()) onConnect(password);
+    if (username.trim() && password.trim()) {
+      onConnect(username.trim(), password.trim());
+    }
   };
 
   return (
     <div className="flex flex-col items-center justify-center h-[450px] bg-[#060b18] rounded-lg border border-cyber-border p-6">
       <div className="w-full max-w-sm">
-        {/* Icon */}
-        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-cyber-orange/10 border border-cyber-orange/30 mb-4 mx-auto">
+        <div className="flex items-center justify-center w-12 h-12 rounded-full bg-cyber-green/10 border border-cyber-green/30 mb-4 mx-auto">
           <svg
-            className="w-6 h-6 text-cyber-orange"
+            className="w-6 h-6 text-cyber-green"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -57,22 +54,33 @@ function PasswordPrompt({
         </div>
 
         <h3 className="text-center text-cyber-text font-semibold mb-1">
-          SSH Key Not Found
+          Connect via SSH
         </h3>
         <p className="text-center text-cyber-text-dim text-xs mb-5">
-          No stored key for this VM.{" "}
           <span className="text-cyber-green font-mono">{ipAddress}</span>
-          <br />
-          Enter the VM password to connect.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-cyber-text-dim mb-1">
+              Username
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="cyber-input w-full"
+              placeholder="cloudvm"
+              autoComplete="username"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-cyber-text-dim mb-1">
               Password
             </label>
             <input
-              ref={inputRef}
+              ref={passwordRef}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -81,101 +89,84 @@ function PasswordPrompt({
               autoComplete="current-password"
             />
           </div>
+
           <button
             type="submit"
-            disabled={!password.trim()}
+            disabled={!username.trim() || !password.trim()}
             className="cyber-btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Connect
           </button>
         </form>
-
-        <p className="text-center text-cyber-text-dim text-xs mt-4">
-          Tip: regenerate your VM to get a new SSH key pair.
-        </p>
       </div>
     </div>
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Main Terminal component
-// ──────────────────────────────────────────────────────────────────────────────
 export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProps) {
-  const containerRef  = useRef<HTMLDivElement>(null);
-  const termRef       = useRef<XTerminal | null>(null);
-  const socketRef     = useRef<Socket | null>(null);
-  const fitRef        = useRef<FitAddon | null>(null);
-  const connectedRef  = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerminal | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const connectedRef = useRef(false);
 
   const onDisconnectRef = useRef(onDisconnect);
-  const vmIdRef         = useRef(vmId);
-  useEffect(() => { onDisconnectRef.current = onDisconnect; }, [onDisconnect]);
-  useEffect(() => { vmIdRef.current = vmId; }, [vmId]);
+  const vmIdRef = useRef(vmId);
+  useEffect(() => {
+    onDisconnectRef.current = onDisconnect;
+  }, [onDisconnect]);
+  useEffect(() => {
+    vmIdRef.current = vmId;
+  }, [vmId]);
 
-  // When no private key is found, we show a password prompt overlay
-  // instead of rendering the xterm terminal directly.
-  const [needsPassword, setNeedsPassword] = useState(false);
-
-  // Called once the socket is open; triggers the SSH connect-ssh event.
-  const connect = useCallback(
-    (params: { privateKey?: string; password?: string; username?: string }) => {
-      if (!socketRef.current || connectedRef.current) return;
-      connectedRef.current = true;
-      socketRef.current.emit("connect-ssh", {
-        vmId: vmIdRef.current,
-        ...params,
-      });
-      termRef.current?.writeln("\r\n\x1b[32m● Connecting to VM...\x1b[0m\r\n");
-    },
-    [],
+  const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(
+    null,
   );
 
-  // Called from PasswordPrompt after the user submits a password.
-  const handlePasswordConnect = useCallback((password: string) => {
-    setNeedsPassword(false);
-    // connect() is called inside the xterm useEffect once the socket opens.
-    // We store the password so the socket.on("connect") handler can pick it up.
-    pendingPasswordRef.current = password;
+  const connect = useCallback((username: string, password: string) => {
+    if (!socketRef.current || connectedRef.current) return;
+    connectedRef.current = true;
+    socketRef.current.emit("connect-ssh", {
+      vmId: vmIdRef.current,
+      username,
+      password,
+    });
+    termRef.current?.writeln("\r\n\x1b[32m● Connecting to VM...\x1b[0m\r\n");
   }, []);
 
-  const pendingPasswordRef = useRef<string | null>(null);
-
-  // ── xterm + socket setup ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!credentials || !containerRef.current) return;
 
-    const term      = new XTerminal({
-      cursorBlink:  true,
-      fontFamily:   '"JetBrains Mono", "Fira Code", monospace',
-      fontSize:     14,
-      lineHeight:   1.2,
+    const term = new XTerminal({
+      cursorBlink: true,
+      fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+      fontSize: 14,
+      lineHeight: 1.2,
       theme: {
-        background:          "#060b18",
-        foreground:          "#c0d0e8",
-        cursor:              "#00e87b",
-        cursorAccent:        "#060b18",
+        background: "#060b18",
+        foreground: "#c0d0e8",
+        cursor: "#00e87b",
+        cursorAccent: "#060b18",
         selectionBackground: "rgba(0,232,123,0.25)",
-        black:         "#0a0f1e",
-        red:           "#ff4757",
-        green:         "#00e87b",
-        yellow:        "#ffb800",
-        blue:          "#00f0ff",
-        magenta:       "#b44dff",
-        cyan:          "#00f0ff",
-        white:         "#c0d0e8",
-        brightBlack:   "#4a5568",
-        brightRed:     "#ff6b7a",
-        brightGreen:   "#5fffb0",
-        brightYellow:  "#ffd666",
-        brightBlue:    "#66f5ff",
+        black: "#0a0f1e",
+        red: "#ff4757",
+        green: "#00e87b",
+        yellow: "#ffb800",
+        blue: "#00f0ff",
+        magenta: "#b44dff",
+        cyan: "#00f0ff",
+        white: "#c0d0e8",
+        brightBlack: "#4a5568",
+        brightRed: "#ff6b7a",
+        brightGreen: "#5fffb0",
+        brightYellow: "#ffd666",
+        brightBlue: "#66f5ff",
         brightMagenta: "#d17dff",
-        brightCyan:    "#66f5ff",
-        brightWhite:   "#ffffff",
+        brightCyan: "#66f5ff",
+        brightWhite: "#ffffff",
       },
     });
 
-    const fit      = new FitAddon();
+    const fit = new FitAddon();
     const webLinks = new WebLinksAddon();
     term.loadAddon(fit);
     term.loadAddon(webLinks);
@@ -185,7 +176,9 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
 
     const safeFit = () => {
       const el = containerRef.current;
-      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) fit.fit();
+      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        fit.fit();
+      }
     };
 
     const rafId = requestAnimationFrame(() => {
@@ -193,78 +186,41 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
 
       term.open(containerRef.current);
       safeFit();
-
       termRef.current = term;
-      fitRef.current  = fit;
 
       term.writeln("\x1b[36m╔══════════════════════════════════════╗\x1b[0m");
-      term.writeln(
-        "\x1b[36m║\x1b[0m   \x1b[32m⚡ CloudVM Web Terminal\x1b[0m            \x1b[36m║\x1b[0m",
-      );
+      term.writeln("\x1b[36m║\x1b[0m   \x1b[32m⚡ CloudVM Web Terminal\x1b[0m            \x1b[36m║\x1b[0m");
       term.writeln("\x1b[36m╚══════════════════════════════════════╝\x1b[0m");
       term.writeln("");
       term.writeln(`  \x1b[90mTarget:\x1b[0m ${ipAddress}`);
       term.writeln("");
 
-      // Decide auth method up-front so we can show the password prompt
-      // BEFORE opening the socket (avoids a double-render flash).
-      const privateKey = getGeneratedVmSshPrivateKey(vmIdRef.current);
-      if (!privateKey && !pendingPasswordRef.current) {
-        // No key and no pending password — show the password overlay.
-        setNeedsPassword(true);
-        return;
-      }
-
-      // Pre-flight token refresh in async IIFE to ensure JWT is fresh before WebSocket upgrade.
-      // This prevents the token from expiring between HTTP login and WebSocket handshake.
       (async () => {
         try {
-          await api.get("/auth/me"); // triggers axios refresh interceptor if token is expired
+          await api.get("/auth/me");
         } catch {
-          term.writeln(
-            "\r\n\x1b[31m✗ Session expired. Please log in again.\x1b[0m"
-          );
+          term.writeln("\r\n\x1b[31m✗ Session expired. Please log in again.\x1b[0m");
           connectedRef.current = false;
           return;
         }
 
-        // Use the configured WS URL (must be the HTTPS origin when behind Nginx).
-        // Socket.IO will automatically upgrade to wss:// when the origin is https://.
         const wsBase = resolveVmWsOrigin();
-
         const socket = io(`${wsBase}/terminal`, {
           transports: ["websocket"],
-          // Nginx proxies /terminal/ → gateway → vm service.
-          // The namespace "/terminal" + path "/terminal/socket.io" are required.
           path: "/terminal/socket.io",
           withCredentials: true,
           reconnection: true,
           reconnectionAttempts: 10,
           reconnectionDelay: 500,
           timeout: 15000,
-          // Force secure transport when page is served over HTTPS
           secure: typeof window !== "undefined" && window.location.protocol === "https:",
         });
+
         socketRef.current = socket;
 
         socket.on("connect", () => {
           term.writeln("\x1b[32m● Connected to terminal server\x1b[0m");
-
-          const pk = getGeneratedVmSshPrivateKey(vmIdRef.current);
-          if (pk) {
-            term.writeln("\x1b[90mUsing generated VM SSH key...\x1b[0m");
-            connect({ privateKey: pk, username: "cloudvm" });
-          } else if (pendingPasswordRef.current) {
-            term.writeln("\x1b[90mUsing password authentication...\x1b[0m");
-            connect({ password: pendingPasswordRef.current, username: "cloudvm" });
-            pendingPasswordRef.current = null;
-          } else {
-            // Edge-case: key was removed after the effect ran
-            term.writeln(
-              "\x1b[31m✗ No SSH credentials available. Please refresh and try again.\x1b[0m",
-            );
-            connectedRef.current = false;
-          }
+          connect(credentials.username, credentials.password);
         });
 
         socket.on("connect_error", (err) => {
@@ -280,8 +236,9 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
           term.write(data);
         });
 
-        socket.on("error", () => {
-          term.writeln("\r\n\x1b[31m✗ Error: Connection failed. Please retry.\x1b[0m");
+        socket.on("error", (payload: { message?: string } | string) => {
+          const msg = typeof payload === "string" ? payload : payload?.message ?? "Connection failed";
+          term.writeln(`\r\n\x1b[31m✗ ${msg}\x1b[0m`);
           connectedRef.current = false;
         });
 
@@ -314,7 +271,6 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
 
       resizeObserver = new ResizeObserver(() => safeFit());
       resizeObserver.observe(containerRef.current!);
-
       handleResize = () => safeFit();
       window.addEventListener("resize", handleResize);
     });
@@ -325,21 +281,17 @@ export default function Terminal({ vmId, ipAddress, onDisconnect }: TerminalProp
       if (handleResize) window.removeEventListener("resize", handleResize);
       socketRef.current?.disconnect();
       term.dispose();
-      socketRef.current  = null;
-      termRef.current    = null;
-      fitRef.current     = null;
+      socketRef.current = null;
+      termRef.current = null;
       connectedRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vmId, ipAddress, needsPassword]);
+  }, [connect, credentials, ipAddress]);
 
-  // When the user submits a password, flip needsPassword → false,
-  // which causes the effect to re-run and open the xterm + socket.
-  if (needsPassword) {
+  if (!credentials) {
     return (
-      <PasswordPrompt
+      <CredentialsPrompt
         ipAddress={ipAddress}
-        onConnect={handlePasswordConnect}
+        onConnect={(username, password) => setCredentials({ username, password })}
       />
     );
   }

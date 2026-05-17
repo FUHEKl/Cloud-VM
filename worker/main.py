@@ -180,9 +180,22 @@ async def main():
                 logger.info("OpenNebula unreachable — retrying connection...")
                 await handler.load_templates()
                 if handler._template_cache is not None:
-                    logger.info("OpenNebula reconnected successfully.")
+                    logger.info("OpenNebula connected — running reconciliation...")
+                    await handler.reconcile_pending_vms(nc)
 
     asyncio.create_task(_opennebula_reconnect_loop())
+
+    async def _vm_state_sync_loop() -> None:
+        """Every 60 seconds, compare DB state vs OpenNebula real state and fix mismatches."""
+        await asyncio.sleep(60)  # wait 60s before first run
+        while True:
+            try:
+                await handler.sync_all_vm_states(nc)
+            except Exception as e:
+                logger.warning("VM state sync loop error: %s", e)
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_vm_state_sync_loop())
 
     # ---------------------------------------------------------------
     # EPHEMERAL consumers with DeliverPolicy.NEW

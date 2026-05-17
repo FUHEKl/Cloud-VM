@@ -29,7 +29,8 @@ type RfbClient = {
 type FakeWebSocket = EventTarget & {
   readyState: number;
   binaryType: string;
-  send: (data: ArrayBuffer | string) => void;
+  protocol: string;
+  send: (data: ArrayBuffer | SharedArrayBuffer | string) => void;
   close: () => void;
 };
 
@@ -37,6 +38,9 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
   const canvasRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RfbClient | null>(null);
   const wsAdapterRef = useRef<FakeWebSocket | null>(null);
+  const sendDataRef = useRef<((data: Uint8Array) => void) | null>(null);
+  // ── FIX: buffer vnc:data events that arrive before the fakeWs is ready ──
+  const pendingDataRef = useRef<(ArrayBuffer | SharedArrayBuffer)[]>([]);
   const [status, setStatus] = useState<ViewerStatus>("connecting");
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -45,10 +49,20 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
       const { default: RFB } = await import("@novnc/novnc");
       if (!canvasRef.current) return;
 
-      const fakeWs = createFakeWebSocket((data) => sendData(data));
+      const fakeWs = createFakeWebSocket(
+        (data) => sendDataRef.current?.(data),
+        // ── FIX: flush any data that arrived before the adapter was set ──
+        () => {
+          const pending = pendingDataRef.current.splice(0);
+          for (const buffered of pending) {
+            fakeWs.dispatchEvent(new MessageEvent("message", { data: buffered }));
+          }
+        },
+      );
+
       wsAdapterRef.current = fakeWs;
 
-      const rfb = new RFB(canvasRef.current, fakeWs as unknown as string, {}) as RfbClient;
+      const rfb = new RFB(canvasRef.current, fakeWs, {}) as RfbClient;
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
       rfb.viewOnly = false;
@@ -77,8 +91,21 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
       initNoVnc();
     },
     onData: (data) => {
-      const message = new MessageEvent("message", { data: data.buffer });
-      wsAdapterRef.current?.dispatchEvent(message);
+      const arrayBuffer = data.buffer.slice(
+        data.byteOffset,
+        data.byteOffset + data.byteLength,
+      );
+
+      if (wsAdapterRef.current) {
+        // Adapter is ready — dispatch immediately
+        const message = new MessageEvent("message", { data: arrayBuffer });
+        wsAdapterRef.current.dispatchEvent(message);
+      } else {
+        // ── FIX: adapter not ready yet (dynamic import still loading) ──
+        // Buffer the data; it will be flushed once createFakeWebSocket fires
+        // its onOpen callback, which happens 50 ms after the adapter is created.
+        pendingDataRef.current.push(arrayBuffer);
+      }
     },
     onClose: () => {
       setStatus("closed");
@@ -90,9 +117,13 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
     },
   });
 
+  sendDataRef.current = sendData;
+
   useEffect(() => {
     return () => {
       rfbRef.current?.disconnect();
+      // Clear any buffered data on unmount
+      pendingDataRef.current = [];
     };
   }, []);
 
@@ -124,13 +155,25 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
   );
 }
 
-function createFakeWebSocket(sendData: (data: Uint8Array) => void): FakeWebSocket {
+/**
+ * Creates a fake WebSocket adapter that bridges socket.io ↔ noVNC's RFB.
+ *
+ * @param sendData  Called when noVNC wants to send bytes to the VNC server.
+ * @param onOpen    Called after the fake "open" event fires (50 ms delay).
+ *                  Use this to flush any data buffered before the adapter
+ *                  was wired up, so the initial RFB server greeting is not lost.
+ */
+function createFakeWebSocket(
+  sendData: (data: Uint8Array) => void,
+  onOpen?: () => void,
+): FakeWebSocket {
   const et = new EventTarget() as FakeWebSocket;
 
   et.readyState = WebSocket.CONNECTING;
   et.binaryType = "arraybuffer";
+  et.protocol = "binary";
 
-  et.send = (data: ArrayBuffer | string) => {
+  et.send = (data: ArrayBuffer | SharedArrayBuffer | string) => {
     const buf =
       typeof data === "string"
         ? new TextEncoder().encode(data)
@@ -138,13 +181,24 @@ function createFakeWebSocket(sendData: (data: Uint8Array) => void): FakeWebSocke
     sendData(buf);
   };
 
+  // noVNC checks for these properties directly — must exist even if null.
+  (et as unknown as Record<string, unknown>).onerror = null;
+  (et as unknown as Record<string, unknown>).onopen = null;
+  (et as unknown as Record<string, unknown>).onmessage = null;
+  (et as unknown as Record<string, unknown>).onclose = null;
+
   et.close = () => {
     et.readyState = WebSocket.CLOSED;
+    et.dispatchEvent(new CloseEvent("close", { wasClean: true }));
   };
 
   setTimeout(() => {
     et.readyState = WebSocket.OPEN;
     et.dispatchEvent(new Event("open"));
+    // ── FIX: flush buffered server data AFTER "open" fires so RFB has
+    // already registered its "message" listener before we replay the
+    // VNC server's initial greeting bytes.
+    onOpen?.();
   }, 50);
 
   return et;
