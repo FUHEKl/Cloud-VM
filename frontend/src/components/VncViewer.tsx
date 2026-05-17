@@ -53,6 +53,7 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
         (data) => sendDataRef.current?.(data),
         // ── FIX: flush any data that arrived before the adapter was set ──
         () => {
+          console.log("[VNC] flushing buffer, pending count:", pendingDataRef.current.length);
           const pending = pendingDataRef.current.splice(0);
           for (const buffered of pending) {
             fakeWs.dispatchEvent(new MessageEvent("message", { data: buffered }));
@@ -66,6 +67,10 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
       rfb.viewOnly = false;
+      console.log(
+        "[VNC] fakeWs.onmessage after RFB:",
+        typeof (fakeWs as unknown as Record<string, unknown>).onmessage,
+      );
 
       rfb.addEventListener("connect", () => setStatus("ready"));
       rfb.addEventListener("disconnect", (event: Event) => {
@@ -91,12 +96,13 @@ export default function VncViewer({ vmId, onDisconnect, token }: VncViewerProps)
       initNoVnc();
     },
     onData: (data) => {
+      console.log("[VNC] onData arrived, wsAdapterRef.current:", !!wsAdapterRef.current);
       const arrayBuffer = data.buffer.slice(
         data.byteOffset,
         data.byteOffset + data.byteLength,
       );
 
-      if (wsAdapterRef.current) {
+      if (wsAdapterRef.current && wsAdapterRef.current.readyState === WebSocket.OPEN) {
         // Adapter is ready — dispatch immediately
         const message = new MessageEvent("message", { data: arrayBuffer });
         wsAdapterRef.current.dispatchEvent(message);
@@ -174,6 +180,7 @@ function createFakeWebSocket(
   et.protocol = "binary";
 
   et.send = (data: ArrayBuffer | SharedArrayBuffer | string) => {
+    console.log("[VNC] noVNC send() called, data length:", typeof data === "string" ? data.length : data.byteLength);
     const buf =
       typeof data === "string"
         ? new TextEncoder().encode(data)
@@ -190,6 +197,16 @@ function createFakeWebSocket(
   et.close = () => {
     et.readyState = WebSocket.CLOSED;
     et.dispatchEvent(new CloseEvent("close", { wasClean: true }));
+  };
+
+  const wsLike = et as unknown as Record<string, unknown>;
+  const _dispatch = et.dispatchEvent.bind(et);
+  wsLike.dispatchEvent = (event: Event): boolean => {
+    const onHandler = wsLike["on" + event.type];
+    if (typeof onHandler === "function") {
+      (onHandler as (this: EventTarget, ev: Event) => void).call(et, event);
+    }
+    return _dispatch(event);
   };
 
   setTimeout(() => {
