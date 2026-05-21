@@ -18,12 +18,25 @@ import { EnableMfaDto } from "./dto/enable-mfa.dto";
 import { MfaReauthDto } from "./dto/mfa-reauth.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
+import { GoogleAuthGuard } from "./guards/google-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { parseCookie } from "../common/security/request-security.util";
 
 type RequestWithUser = Request & {
   user: {
     userId: string;
+  };
+};
+
+type RequestWithGoogleAuth = Request & {
+  user?: {
+    accessToken?: string;
+    refreshToken?: string;
+    user?: unknown;
+    error?: {
+      code: string;
+      message: string;
+    };
   };
 };
 
@@ -161,6 +174,58 @@ export class AuthController {
       accessToken,
       refreshToken,
     };
+  }
+
+  @Get("google")
+  @UseGuards(GoogleAuthGuard)
+  async googleAuth() {
+    // Passport Google strategy handles redirect.
+  }
+
+  @Get("google/callback")
+  @UseGuards(GoogleAuthGuard)
+  async googleCallback(
+    @Req() req: RequestWithGoogleAuth,
+    @Res() res: Response,
+  ) {
+    const originFallback = (process.env.CORS_ORIGIN || "http://127.0.0.1:3000")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)[0] || "http://127.0.0.1:3000";
+
+    const origin = (process.env.PUBLIC_APP_ORIGIN || originFallback).replace(/\/+$/, "");
+    const secure = this.shouldUseSecureCookies(req);
+
+    res.clearCookie("google_intent", {
+      httpOnly: true,
+      secure,
+      sameSite: "lax",
+      path: "/",
+    });
+
+    const authError = req.user?.error;
+    if (authError?.code === "account_not_found") {
+      return res.redirect(`${origin}/login?error=google_account_not_found`);
+    }
+
+    if (authError?.code === "account_inactive") {
+      return res.redirect(`${origin}/login?error=google_account_inactive`);
+    }
+
+    if (authError?.code) {
+      return res.redirect(`${origin}/login?error=google_auth_failed`);
+    }
+
+    const accessToken = req.user?.accessToken;
+    const refreshToken = req.user?.refreshToken;
+
+    if (typeof accessToken !== "string" || typeof refreshToken !== "string") {
+      return res.redirect(`${origin}/login?error=google_auth_failed`);
+    }
+
+    const rememberMe = parseCookie(req, "rememberMe") === "1";
+    this.setAuthCookies(req, res, rememberMe, { accessToken, refreshToken });
+    return res.redirect(`${origin}/dashboard`);
   }
 
   @Post("mfa/verify")

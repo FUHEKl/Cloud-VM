@@ -76,7 +76,7 @@ function buildSocketFingerprint(client: Socket): string {
 
 @WebSocketGateway({
   cors: {
-    origin: (process.env.CORS_ORIGIN || "http://localhost:3000")
+    origin: (process.env.CORS_ORIGIN || "https://127.0.0.1")
       .split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),

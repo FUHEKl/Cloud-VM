@@ -5,10 +5,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/error";
+import { resolveApiOrigin } from "@/lib/runtime-urls";
 
 export default function RegisterPage() {
   const router = useRouter();
   const { register } = useAuth();
+  const apiBaseUrl = resolveApiOrigin();
+  const googleAuthUrl = `${apiBaseUrl}/api/auth/google?intent=register`;
   const [form, setForm] = useState({
     firstName: "",
     lastName: "",
@@ -87,6 +90,23 @@ export default function RegisterPage() {
               {error}
             </div>
           )}
+
+          <div className="mb-6 space-y-4">
+            <a
+              href={googleAuthUrl}
+              className="cyber-btn-secondary w-full flex items-center justify-center gap-2"
+            >
+              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-cyber-border text-xs font-semibold text-cyber-cyan">
+                G
+              </span>
+              Sign up with Google
+            </a>
+            <div className="flex items-center gap-3 text-xs text-cyber-text-dim">
+              <span className="h-px flex-1 bg-cyber-border/60" />
+              <span>or create account with email</span>
+              <span className="h-px flex-1 bg-cyber-border/60" />
+            </div>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">

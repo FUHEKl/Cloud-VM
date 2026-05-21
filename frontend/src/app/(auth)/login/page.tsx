@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { getErrorMessage } from "@/lib/error";
+import { resolveApiOrigin } from "@/lib/runtime-urls";
 
 type ApiErrorLike = {
   response?: {
@@ -15,6 +16,8 @@ type ApiErrorLike = {
 export default function LoginPage() {
   const router = useRouter();
   const { login, verifyMfa } = useAuth();
+  const apiBaseUrl = resolveApiOrigin();
+  const googleAuthUrl = `${apiBaseUrl}/api/auth/google`;
   const [form, setForm] = useState({ email: "", password: "" });
   const [challengeId, setChallengeId] = useState("");
   const [mfaCode, setMfaCode] = useState("");
@@ -22,6 +25,26 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthError = params.get("error");
+    if (!oauthError) return;
+
+    if (oauthError === "google_account_not_found") {
+      setError("No account found for this Google email. Please register first.");
+      return;
+    }
+
+    if (oauthError === "google_account_inactive") {
+      setError("This account is deactivated. Please contact support.");
+      return;
+    }
+
+    if (oauthError === "google_auth_failed") {
+      setError("Google authentication failed. Please try again.");
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +126,25 @@ export default function LoginPage() {
           {error && (
             <div className="mb-4 px-4 py-3 rounded-lg bg-cyber-red/10 border border-cyber-red/30 text-cyber-red text-sm">
               {error}
+            </div>
+          )}
+
+          {!challengeId && (
+            <div className="mb-6 space-y-4">
+              <a
+                href={googleAuthUrl}
+                className="cyber-btn-secondary w-full flex items-center justify-center gap-2"
+              >
+                <span className="flex h-5 w-5 items-center justify-center rounded-full border border-cyber-border text-xs font-semibold text-cyber-cyan">
+                  G
+                </span>
+                Continue with Google
+              </a>
+              <div className="flex items-center gap-3 text-xs text-cyber-text-dim">
+                <span className="h-px flex-1 bg-cyber-border/60" />
+                <span>or sign in with email</span>
+                <span className="h-px flex-1 bg-cyber-border/60" />
+              </div>
             </div>
           )}
 

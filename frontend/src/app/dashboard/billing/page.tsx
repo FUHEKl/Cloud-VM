@@ -161,6 +161,14 @@ export default function BillingPage() {
 
   const activePlan = profileDetails?.subscription?.planId;
   const canRenewSamePlan = profileDetails?.subscription?.canRenewSamePlan ?? true;
+  const vmUsagePercent = profileDetails?.subscription
+    ? Math.min(
+        100,
+        profileDetails.subscription.vmHoursIncluded > 0
+          ? (profileDetails.subscription.vmHoursUsed / profileDetails.subscription.vmHoursIncluded) * 100
+          : 0,
+      )
+    : 0;
 
   const isPlanSelectable = (planId: PlanId) => {
     if (!activePlan || activePlan === "unlimited") return true;
@@ -330,6 +338,12 @@ export default function BillingPage() {
           {" "}plan · VM hours used: {profileDetails.subscription.vmHoursUsed.toFixed(2)} / {profileDetails.subscription.vmHoursIncluded}
           {" "}· Remaining: {profileDetails.subscription.vmHoursRemaining.toFixed(2)}
           {" "}· Cycle ends: {new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}
+          <div className="w-full bg-cyber-border rounded h-2 mt-2">
+            <div
+              className="bg-cyber-cyan h-2 rounded"
+              style={{ width: `${vmUsagePercent}%` }}
+            />
+          </div>
         </div>
       )}
 

@@ -38,7 +38,7 @@ function normalizeBinaryPayload(data: Buffer | Uint8Array | ArrayBuffer): Buffer
   return Buffer.from(data);
 }
 
-const vncCorsOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
+const vncCorsOrigins = (process.env.CORS_ORIGIN || "https://127.0.0.1")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);

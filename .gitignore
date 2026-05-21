@@ -24,6 +24,7 @@ nginx/ssl/*.crt
 scripts/*
 !scripts/admin_mfa_smoke_test.py
 !scripts/reconcile_paid_subscriptions.py
+!scripts/fake_vm.py
 !scripts/postgres/
 !scripts/postgres/**
 !scripts/opennebula/

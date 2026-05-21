@@ -40,7 +40,7 @@ export class NatsService implements OnModuleInit {
         const connectionOptions = this.buildConnectionOptions(natsUrl);
         this.connection = await connect(connectionOptions);
         this.js = this.connection.jetstream();
-        this.logger.log(`Connected to NATS at ${natsUrl}`);
+        this.logger.log(`Connected to NATS at ${String(connectionOptions.servers)}`);
         await this.ensureStream();
         this.subscribeToStatusUpdates();
         return;
@@ -53,15 +53,32 @@ export class NatsService implements OnModuleInit {
   }
 
   private buildConnectionOptions(natsUrl: string) {
-    const emptyPasswordMatch = natsUrl.match(/^nats:\/\/([^:@/]+):@(.+)$/);
-    if (emptyPasswordMatch) {
-      const [, user, host] = emptyPasswordMatch;
+    const parsed = this.extractCredentialsFromUrl(natsUrl);
+    const envUser = process.env.NATS_USER;
+    const envPass = process.env.NATS_PASSWORD;
+
+    if (parsed) {
       this.logger.warn(
-        "NATS URL includes an empty password; using explicit user/pass options",
+        "NATS URL includes credentials; using explicit user/pass options instead",
       );
-      return { servers: `nats://${host}`, user, pass: "" };
     }
-    return { servers: natsUrl };
+
+    const servers = parsed?.server ?? natsUrl;
+    const user = parsed?.user ?? envUser;
+    const pass = parsed?.pass ?? envPass;
+
+    if (user) {
+      return { servers, user, pass: pass ?? "" };
+    }
+
+    return { servers };
+  }
+
+  private extractCredentialsFromUrl(natsUrl: string) {
+    const match = natsUrl.match(/^nats:\/\/([^:@/]+)(?::([^@]*))?@(.+)$/);
+    if (!match) return null;
+    const [, user, pass = "", host] = match;
+    return { server: `nats://${host}`, user, pass };
   }
 
   private async ensureStream(): Promise<void> {

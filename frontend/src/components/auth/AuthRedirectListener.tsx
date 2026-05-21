@@ -10,6 +10,26 @@ export default function AuthRedirectListener() {
   const { forceLogout } = useAuth();
 
   useEffect(() => {
+    const desiredOrigin = (() => {
+      const configured = process.env.NEXT_PUBLIC_API_URL;
+      if (!configured) return "";
+      try {
+        return new URL(configured).origin;
+      } catch {
+        return "";
+      }
+    })();
+    if (typeof window !== "undefined") {
+      const currentOrigin = window.location.origin;
+      const targetOrigin = desiredOrigin || `https://${window.location.host}`;
+
+      if (currentOrigin !== targetOrigin) {
+        const targetUrl = `${targetOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
+        window.location.replace(targetUrl);
+        return;
+      }
+    }
+
     const handleLogout = () => {
       forceLogout();
       if (pathname !== "/login") {

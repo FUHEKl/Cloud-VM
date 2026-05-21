@@ -388,10 +388,32 @@ export class PaymentService {
 
     await this.enforcePlanPurchaseRules(userId, planId);
 
+    const snapshot = await this.getSubscriptionAccessSnapshot(userId);
+    const rawPlanId = snapshot.activePlanId;
+    const currentPlanId = rawPlanId === "unlimited" ? null : rawPlanId;
+    const requestedRank = this.getPlanRank(planId);
+    const currentRank = this.getPlanRank(currentPlanId);
+    const isUpgrade = Boolean(currentPlanId) && requestedRank > currentRank;
+
+    const currentPlanAmount = isUpgrade && currentPlanId
+      ? PLAN_CATALOG[currentPlanId].amountDt
+      : 0;
+    const chargeDt = isUpgrade
+      ? Math.max(0, Number((plan.amountDt - currentPlanAmount).toFixed(2)))
+      : plan.amountDt;
+
     const origin = this.getPublicOrigin();
     const usdPerTndRate = this.getUsdPerTndRate();
-    const usdAmount = Number((plan.amountDt * usdPerTndRate).toFixed(2));
+    const usdAmount = Number((chargeDt * usdPerTndRate).toFixed(2));
     const usdCents = Math.round(usdAmount * 100);
+
+    const productName = isUpgrade
+      ? `Upgrade to ${PLAN_LABELS[planId]}`
+      : plan.name;
+
+    const productDescription = isUpgrade && currentPlanId
+      ? `${plan.description} · Upgrade from ${PLAN_LABELS[currentPlanId]} · Displayed price: ${chargeDt} DT`
+      : `${plan.description} · Displayed price: ${plan.amountDt} DT`;
 
     const session = await this.stripe.checkout.sessions.create({
       mode: "payment",
@@ -403,8 +425,8 @@ export class PaymentService {
             currency: "usd",
             unit_amount: usdCents,
             product_data: {
-              name: plan.name,
-              description: `${plan.description} · Displayed price: ${plan.amountDt} DT`,
+              name: productName,
+              description: productDescription,
             },
           },
         },
@@ -412,9 +434,12 @@ export class PaymentService {
       metadata: {
         userId,
         planId,
-        amountTnd: String(plan.amountDt),
+        amountTnd: String(chargeDt),
         usdPerTndRate: String(usdPerTndRate),
         chargedUsd: String(usdAmount),
+        ...(isUpgrade && currentPlanId
+          ? { upgrade_from: currentPlanId }
+          : {}),
       },
       success_url: `${origin}/dashboard/billing?status=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/dashboard/billing?status=cancelled`,
@@ -424,7 +449,7 @@ export class PaymentService {
       data: {
         userId,
         planId,
-        amount: plan.amountDt,
+        amount: chargeDt,
         currency: "TND",
         status: "pending",
         method: `stripe:${session.id}:plan:${planId}:usd:${usdAmount.toFixed(2)}`,
@@ -434,7 +459,7 @@ export class PaymentService {
     return {
       checkoutUrl: session.url,
       sessionId: session.id,
-      amountDt: plan.amountDt,
+      amountDt: chargeDt,
       currency: "TND",
       chargedCurrency: "USD",
       chargedAmount: usdAmount,

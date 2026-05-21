@@ -240,6 +240,7 @@ export class UserService {
   async syncFromAuth(payload: {
     id: string;
     email: string;
+    googleId?: string | null;
     firstName: string;
     lastName: string;
     role?: "USER" | "ADMIN";
@@ -249,28 +250,40 @@ export class UserService {
   }) {
     const role = payload.role === "ADMIN" ? "ADMIN" : "USER";
 
+    const updateData: any = {
+      email: payload.email,
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+      role,
+      isActive: payload.isActive ?? true,
+      mfaEnabled: payload.mfaEnabled ?? false,
+      mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
+    };
+
+    if (payload.googleId !== undefined) {
+      updateData.googleId = payload.googleId;
+    }
+
+    const createData: any = {
+      id: payload.id,
+      email: payload.email,
+      password: '',
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+      role,
+      isActive: payload.isActive ?? true,
+      mfaEnabled: payload.mfaEnabled ?? false,
+      mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
+    };
+
+    if (payload.googleId) {
+      createData.googleId = payload.googleId;
+    }
+
     const user = await this.prisma.user.upsert({
       where: { id: payload.id },
-      update: {
-        email: payload.email,
-        firstName: payload.firstName,
-        lastName: payload.lastName,
-        role,
-        isActive: payload.isActive ?? true,
-        mfaEnabled: payload.mfaEnabled ?? false,
-        mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
-      },
-      create: {
-        id: payload.id,
-        email: payload.email,
-        password: '',
-        firstName: payload.firstName,
-        lastName: payload.lastName,
-        role,
-        isActive: payload.isActive ?? true,
-        mfaEnabled: payload.mfaEnabled ?? false,
-        mfaEnabledAt: payload.mfaEnabledAt ? new Date(payload.mfaEnabledAt) : null,
-      },
+      update: updateData,
+      create: createData,
     });
 
     // Keep user quotas immutable on auth sync to avoid resetting paid plans.
@@ -330,7 +343,7 @@ export class UserService {
       return SubscriptionPlanId.PRO;
     }
 
-    return SubscriptionPlanId.STUDENT;
+    return null;
   }
 
   private async upsertQuota(userId: string, planId: SubscriptionPlanId) {

@@ -16,9 +16,11 @@ import * as bcrypt from "bcrypt";
 import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "crypto";
 import Redis from "ioredis";
 import { Request } from "express";
+import { Profile } from "passport-google-oauth20";
 import {
   buildRequestFingerprint,
   getClientIp,
+  parseCookie,
 } from "../common/security/request-security.util";
 import { SecurityLoggerService } from "../common/security/security-logger.service";
 import {
@@ -339,6 +341,7 @@ export class AuthService {
         body: JSON.stringify({
           id: user.id,
           email: user.email,
+          googleId: user.googleId ?? null,
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
@@ -584,17 +587,7 @@ export class AuthService {
     await this.redis.del(this.getFailKey(email), this.getLockKey(email));
   }
 
-  async register(dto: RegisterDto, req: Request) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (existingUser) {
-      throw new ConflictException("Email already in use");
-    }
-
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
-
+  private getFreePlanQuota() {
     const freePlanMaxVms = Number(process.env.AUTH_FREE_PLAN_MAX_VMS || "2");
     const freePlanMaxCpu = Number(process.env.AUTH_FREE_PLAN_MAX_CPU || "2");
     const freePlanMaxRamMb = Number(process.env.AUTH_FREE_PLAN_MAX_RAM_MB || "4096");
@@ -611,20 +604,31 @@ export class AuthService {
       );
     }
 
+    return {
+      maxVms: Math.floor(freePlanMaxVms),
+      maxCpu: Math.floor(freePlanMaxCpu),
+      maxRamMb: Math.floor(freePlanMaxRamMb),
+      maxDiskGb: Math.floor(freePlanMaxDiskGb),
+    };
+  }
+
+  async register(dto: RegisterDto, req: Request) {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException("Email already in use");
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         password: hashedPassword,
         firstName: dto.firstName,
         lastName: dto.lastName,
-        quota: {
-          create: {
-            maxVms: Math.floor(freePlanMaxVms),
-            maxCpu: Math.floor(freePlanMaxCpu),
-            maxRamMb: Math.floor(freePlanMaxRamMb),
-            maxDiskGb: Math.floor(freePlanMaxDiskGb),
-          },
-        },
       },
     });
 
@@ -799,7 +803,7 @@ export class AuthService {
         mfaRequired: true,
         challengeId,
         message: "MFA verification required for admin account",
-        ...(process.env.NODE_ENV !== "production" ? { devOtp: code } : {}),
+        devOtp: code,
       };
     }
 
@@ -812,6 +816,115 @@ export class AuthService {
       ip: getClientIp(req),
       result: "success",
       metadata: { email: user.email },
+    });
+
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: this.excludePassword(user),
+    };
+  }
+
+  async findOrCreateGoogleUser(profile: Profile, req: Request) {
+    const email = profile.emails?.[0]?.value?.trim().toLowerCase();
+    if (!email) {
+      return {
+        error: {
+          code: "google_email_missing",
+          message: "Google profile is missing an email address",
+        },
+      };
+    }
+
+    const googleId = profile.id;
+    const intent = (parseCookie(req, "google_intent") || "login").toLowerCase();
+    const allowCreate = intent === "register";
+    let created = false;
+    let user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      if (!allowCreate) {
+        this.securityLogger.log({
+          eventType: "auth.google_login.failure",
+          ip: getClientIp(req),
+          result: "failure",
+          metadata: {
+            email,
+            reason: "account_not_found",
+          },
+        });
+
+        return {
+          error: {
+            code: "account_not_found",
+            message: "Account does not exist",
+          },
+        };
+      }
+
+      const randomPassword = randomBytes(32).toString("hex");
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+      const displayName = (profile.displayName || "").trim();
+      const givenName = (profile.name?.givenName || "").trim();
+      const familyName = (profile.name?.familyName || "").trim();
+      const inferredFirst = givenName || displayName.split(" ")[0] || "Google";
+      const inferredLast = familyName || displayName.split(" ").slice(1).join(" ") || "User";
+
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          googleId,
+          password: hashedPassword,
+          firstName: inferredFirst,
+          lastName: inferredLast,
+        },
+      });
+      created = true;
+    }
+
+    if (!user.isActive) {
+      this.securityLogger.log({
+        eventType: "auth.google_login.failure",
+        ip: getClientIp(req),
+        result: "failure",
+        metadata: {
+          email: user.email,
+          reason: "account_inactive",
+        },
+      });
+
+      return {
+        error: {
+          code: "account_inactive",
+          message: "Account is deactivated",
+        },
+      };
+    }
+
+    const existingGoogleId = (user as any).googleId as string | null | undefined;
+    if (!existingGoogleId || existingGoogleId !== googleId) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: { googleId },
+      });
+    }
+
+    try {
+      await this.syncUserProjection(user);
+    } catch (error) {
+      this.logger.error(`User projection sync failed after Google login: ${(error as Error).message}`);
+    }
+
+    const tokens = await this.generateTokens(user, req);
+    await this.storeLoginContext(user.id, req);
+
+    this.securityLogger.log({
+      eventType: "auth.google_login.success",
+      userId: user.id,
+      ip: getClientIp(req),
+      result: "success",
+      metadata: { email: user.email, created },
     });
 
     return {
@@ -1277,13 +1390,18 @@ export class AuthService {
     }
 
     if (storedToken.expiresAt < new Date()) {
-      await this.prisma.refreshToken.delete({
+      // Use deleteMany to avoid race conditions where parallel refresh
+      // requests try to delete the same record simultaneously and one
+      // of them fails with a not-found error.
+      await this.prisma.refreshToken.deleteMany({
         where: { id: storedToken.id },
       });
       throw new UnauthorizedException("Refresh token expired");
     }
 
-    await this.prisma.refreshToken.delete({
+    // Delete by id using deleteMany to make this operation idempotent
+    // and resilient to concurrent refresh requests.
+    await this.prisma.refreshToken.deleteMany({
       where: { id: storedToken.id },
     });
 

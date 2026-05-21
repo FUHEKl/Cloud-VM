@@ -5,6 +5,7 @@ import {
   RequestMethod,
 } from "@nestjs/common";
 import { AuthProxyMiddleware } from "./middlewares/auth-proxy.middleware";
+import { AuthOauthProxyMiddleware } from "./middlewares/auth-oauth-proxy.middleware";
 import { UserProxyMiddleware } from "./middlewares/user-proxy.middleware";
 import { SshKeyProxyMiddleware } from "./middlewares/ssh-key-proxy.middleware";
 import { VmProxyMiddleware } from "./middlewares/vm-proxy.middleware";
@@ -22,10 +23,23 @@ import { RedisRateLimitMiddleware } from "../security/redis-rate-limit.middlewar
 export class ProxyModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
+      .apply(RedisRateLimitMiddleware, AuthOauthProxyMiddleware)
+      .forRoutes(
+        { path: "api/auth", method: RequestMethod.GET },
+        { path: "api/auth/*", method: RequestMethod.GET },
+      );
+
+    consumer
       .apply(RedisRateLimitMiddleware, AuthProxyMiddleware)
       .forRoutes(
-        { path: "api/auth", method: RequestMethod.ALL },
-        { path: "api/auth/*", method: RequestMethod.ALL },
+        { path: "api/auth", method: RequestMethod.POST },
+        { path: "api/auth/*", method: RequestMethod.POST },
+        { path: "api/auth", method: RequestMethod.PUT },
+        { path: "api/auth/*", method: RequestMethod.PUT },
+        { path: "api/auth", method: RequestMethod.PATCH },
+        { path: "api/auth/*", method: RequestMethod.PATCH },
+        { path: "api/auth", method: RequestMethod.DELETE },
+        { path: "api/auth/*", method: RequestMethod.DELETE },
       );
 
     consumer

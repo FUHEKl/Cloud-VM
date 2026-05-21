@@ -71,7 +71,7 @@ function buildSocketFingerprint(client: Socket): string {
   return createHash("sha256").update(`${ip}|${userAgent}`).digest("hex");
 }
 
-const aiCorsOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
+const aiCorsOrigins = (process.env.CORS_ORIGIN || "https://127.0.0.1")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);

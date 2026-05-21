@@ -13,6 +13,32 @@ import type {
 
 const API_URL = resolveApiOrigin();
 
+let refreshPromise: Promise<void> | null = null;
+
+const refreshSession = () => {
+  if (!refreshPromise) {
+    refreshPromise = axios
+      .post(`${API_URL}/api/auth/refresh`, {}, { withCredentials: true })
+      .then(() => {
+        setAuthCookies({
+          rememberMe: isRememberMeEnabled(),
+        });
+      })
+      .catch((error) => {
+        clearAuthCookies();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("auth:logout"));
+        }
+        throw error;
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+};
+
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   headers: { "Content-Type": "application/json" },
@@ -29,7 +55,8 @@ api.interceptors.response.use(
     const isAuthFlowRequest =
       requestUrl.includes("/auth/login") ||
       requestUrl.includes("/auth/mfa/verify") ||
-      requestUrl.includes("/auth/register");
+      requestUrl.includes("/auth/register") ||
+      requestUrl.includes("/auth/refresh");
 
     // MFA/login failures should stay on the auth screen and show the backend error.
     if (isAuthFlowRequest) {
@@ -39,20 +66,9 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !original._retry) {
       original._retry = true;
       try {
-        await axios.post(
-          `${API_URL}/api/auth/refresh`,
-          {},
-          { withCredentials: true },
-        );
-        setAuthCookies({
-          rememberMe: isRememberMeEnabled(),
-        });
+        await refreshSession();
         return api(original);
       } catch {
-        clearAuthCookies();
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new Event("auth:logout"));
-        }
         return Promise.reject(error);
       }
     }
