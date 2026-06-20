@@ -111,6 +111,21 @@ export interface UserQuota {
   maxDiskGb: number;
 }
 
+export interface PublicPlanCatalogItem {
+  id: "student" | "pro" | "enterprise";
+  name: string;
+  amountDt: number;
+  rank: number;
+  vmHoursMonthly: number;
+  quota: {
+    maxVms: number;
+    maxCpu: number;
+    maxRamMb: number;
+    maxDiskGb: number;
+  };
+  features: string[];
+}
+
 export interface Notification {
   id: string;
   title: string;

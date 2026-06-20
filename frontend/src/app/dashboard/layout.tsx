@@ -48,6 +48,7 @@ const navItems = [
   {
     label: "SSH Keys",
     href: "/dashboard/ssh-keys",
+    hidden: true,
     icon: (
       <svg
         className="w-5 h-5"
@@ -132,8 +133,8 @@ const adminItems = [
     ),
   },
   {
-    label: "Admin Billing",
-    href: "/dashboard/admin/billing",
+    label: "Universities",
+    href: "/dashboard/admin/universities",
     icon: (
       <svg
         className="w-5 h-5"
@@ -142,10 +143,25 @@ const adminItems = [
         stroke="currentColor"
         strokeWidth="1.5"
       >
-        <rect x="2" y="5" width="20" height="14" rx="2" />
-        <path d="M2 10h20" />
-        <path d="M7 15h3" />
-        <path d="M16 14v4M14 16h4" />
+        <path d="M4 21V8l8-4 8 4v13" />
+        <path d="M2 21h20" />
+        <path d="M7 21v-8h10v8" />
+        <path d="M10 13v8M14 13v8" />
+      </svg>
+    ),
+  },
+  {
+    label: "Plan Pricing",
+    href: "/dashboard/admin/plans",
+    icon: (
+      <svg
+        className="w-5 h-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      >
+        <path d="M12 2l3.5 7.1L23 10l-5.5 5.3L19 23l-7-3.7L5 23l1.5-7.7L1 10l7.5-.9L12 2z" />
       </svg>
     ),
   },
@@ -268,8 +284,8 @@ export default function DashboardLayout({
 
   const baseNavItems =
     user?.role === "ADMIN"
-      ? navItems.filter((item) => item.href !== "/dashboard/billing")
-      : navItems;
+      ? navItems.filter((item) => item.href !== "/dashboard/billing" && !item.hidden)
+      : navItems.filter((item) => !item.hidden);
 
   const allNavItems =
     user?.role === "ADMIN" ? [...baseNavItems, ...adminItems] : baseNavItems;

@@ -182,14 +182,20 @@ export class NatsService implements OnModuleInit {
             where: { id: vmId },
             data: {
               status: VmStatus.DELETED,
-              stoppedAt: new Date(),
             },
           });
+
           if (updated.count === 0) {
             this.logger.warn(`Skip DELETED sync: VM ${vmId} not found in this DB`);
-          } else {
-            this.logger.log(`Marked VM ${vmId} as DELETED in DB`);
+            return;
           }
+
+          await this.prisma.virtualMachine.updateMany({
+            where: { id: vmId, stoppedAt: null },
+            data: { stoppedAt: new Date() },
+          });
+
+          this.logger.log(`Marked VM ${vmId} as DELETED in DB`);
         } catch (error) {
           this.logger.error(`Failed to mark VM ${vmId} as DELETED`, error);
         }

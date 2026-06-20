@@ -4,7 +4,9 @@ import {
   Get,
   Headers,
   HttpCode,
+  Param,
   Post,
+  Put,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -13,6 +15,7 @@ import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { CreateCheckoutSessionDto } from "./dto/create-checkout-session.dto";
 import { ConfirmCheckoutSessionDto } from "./dto/confirm-checkout-session.dto";
+import { UpdatePlanDto } from "./dto/update-plan.dto";
 import { PaymentService } from "./payment.service";
 
 @Controller("payments")
@@ -46,6 +49,22 @@ export class PaymentController {
   @Get("plans")
   async listPublicPlans() {
     return this.paymentService.getPublicPlans();
+  }
+
+  @Get("admin/plans")
+  @UseGuards(JwtAuthGuard)
+  async listAdminPlans(@CurrentUser() user: { role: string }) {
+    return this.paymentService.adminGetAllPlans(user.role);
+  }
+
+  @Put("admin/plans/:planId")
+  @UseGuards(JwtAuthGuard)
+  async updateAdminPlan(
+    @CurrentUser() user: { role: string },
+    @Param("planId") planId: string,
+    @Body() dto: UpdatePlanDto,
+  ) {
+    return this.paymentService.adminUpdatePlan(user.role, planId, dto);
   }
 
   @Post("webhook")

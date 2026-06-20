@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 RUN apk add --no-cache openssl
-RUN npm install
+RUN npm ci
 RUN npx prisma generate
 COPY . .
 RUN npm run build
@@ -16,4 +16,5 @@ COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app/package.json ./
 COPY --from=base /app/prisma ./prisma
 EXPOSE 3004
+USER node
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]

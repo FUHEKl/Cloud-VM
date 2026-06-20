@@ -202,6 +202,12 @@ export class VmService {
       remoteQuota = await this.fetchInternalQuotaSnapshot(userId);
     }
 
+    if (!isAdmin && !remoteQuota?.hasActiveSubscription) {
+      throw new ForbiddenException(
+        "No active subscription found. Please purchase a plan before creating VMs.",
+      );
+    }
+
     const providedPublicKey = dto.sshPublicKey?.trim();
     let sshPublicKeyForVm = providedPublicKey || "";
     let generatedSshPrivateKey: string | null = null;
@@ -251,12 +257,6 @@ export class VmService {
               maxDiskGb: remoteQuota.quota.maxDiskGb,
             },
           });
-        }
-
-        if (!isAdmin && !quota) {
-          throw new ForbiddenException(
-            "No active subscription found. Please purchase a plan before creating VMs.",
-          );
         }
 
         const activeVms = await tx.virtualMachine.count({

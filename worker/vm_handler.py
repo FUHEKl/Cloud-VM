@@ -124,6 +124,28 @@ LCM_STATUS_MAP = {
 }
 
 
+def _is_cloudvm_base_template(template: Any) -> bool:
+    """Return True if template is tagged as a CloudVM base template."""
+    try:
+        template_block = getattr(template, "TEMPLATE", None)
+        if isinstance(template_block, dict):
+            return template_block.get("CLOUDVM_BASE") == "YES"
+        if template_block is not None:
+            if hasattr(template_block, "get"):
+                try:
+                    return template_block.get("CLOUDVM_BASE") == "YES"
+                except Exception:
+                    pass
+            try:
+                return template_block["CLOUDVM_BASE"] == "YES"
+            except Exception:
+                pass
+            return getattr(template_block, "CLOUDVM_BASE", None) == "YES"
+    except Exception:
+        return False
+    return False
+
+
 class VMHandler:
     """Handles OpenNebula VM lifecycle operations."""
 
@@ -142,6 +164,10 @@ class VMHandler:
             template_cache = cast(Any, await asyncio.to_thread(
                 self.one.templatepool.info, -1, -1, -1
             ))
+            template_cache.VMTEMPLATE = [
+                t for t in template_cache.VMTEMPLATE
+                if _is_cloudvm_base_template(t)
+            ]
             self._template_cache = template_cache
             template_names = [t.NAME for t in template_cache.VMTEMPLATE]
             logger.info(
@@ -235,8 +261,10 @@ class VMHandler:
             escaped_name = _escape_one_template_value(name)
 
             # Base attributes always included (no credentials)
+            # NOTE: DISK is intentionally omitted here — the base template
+            # already defines DISK with the correct IMAGE_ID. Overriding it
+            # here would shadow the template definition and break disk selection.
             extra_template_base = (
-                f'NAME="{escaped_name}"\n'
                 f"CPU={cpu}\n"
                 f"VCPU={cpu}\n"
                 f"MEMORY={ram_mb}\n"
@@ -262,6 +290,16 @@ class VMHandler:
             # the template (e.g. because the template's CONTEXT has no
             # USERNAME/PASSWORD placeholders), fall back silently to the base
             # template so the VM still gets created without them.
+            # Clean up stale template with same name before instantiating
+            try:
+                pool = cast(Any, await asyncio.to_thread(self.one.templatepool.info, -1, -1, -1))
+                for t in pool.VMTEMPLATE:
+                    if t.NAME == name and t.ID != template_id:
+                        await asyncio.to_thread(self.one.template.delete, t.ID, True)
+                        logger.info("Deleted stale template %s (ID=%s)", name, t.ID)
+            except Exception as cleanup_err:
+                logger.warning("Stale template cleanup failed: %s", cleanup_err)
+
             one_vm_id = None
             try:
                 one_vm_id = await asyncio.to_thread(
@@ -270,6 +308,7 @@ class VMHandler:
                     name,
                     False,
                     extra_template_with_creds,
+                    True,  # persistent clone
                 )
                 logger.info(
                     "Instantiated VM %s from template %s (with credentials)",
@@ -283,12 +322,23 @@ class VMHandler:
                     vm_id,
                     cred_exc,
                 )
+                # Cleanup again before retry (the failed attempt may have left a stale template)
+                try:
+                    pool = cast(Any, await asyncio.to_thread(self.one.templatepool.info, -1, -1, -1))
+                    for t in pool.VMTEMPLATE:
+                        if t.NAME == name and t.ID != template_id:
+                            await asyncio.to_thread(self.one.template.delete, t.ID, True)
+                            logger.info("Deleted stale template on retry %s (ID=%s)", name, t.ID)
+                except Exception as cleanup_err2:
+                    logger.warning("Stale template cleanup (retry) failed: %s", cleanup_err2)
+
                 one_vm_id = await asyncio.to_thread(
                     self.one.template.instantiate,
                     template_id,
                     name,
                     False,
                     extra_template_base,
+                    True,  # persistent clone
                 )
                 logger.info(
                     "Instantiated VM %s from template %s (without credentials)",
@@ -296,11 +346,44 @@ class VMHandler:
                     template_id,
                 )
 
+            # Remove CLOUDVM_BASE flag from cloned template so it doesn't appear in template list
+            try:
+                cloned_vm = cast(Any, await asyncio.to_thread(self.one.vm.info, one_vm_id))
+                tmpl_block = getattr(cloned_vm, "TEMPLATE", None)
+                cloned_tmpl_id = tmpl_block.get("TEMPLATE_ID") if tmpl_block else None
+                if cloned_tmpl_id is not None:
+                    cloned_tmpl_id_int = int(cloned_tmpl_id)
+                    template_id_int = int(template_id)
+                    if cloned_tmpl_id_int != template_id_int:
+                        await asyncio.to_thread(
+                            self.one.template.update,
+                            cloned_tmpl_id_int,
+                            'CLOUDVM_BASE="NO"',
+                            1,  # merge mode — only updates this attribute
+                        )
+                        logger.info(
+                            "Cleared CLOUDVM_BASE from cloned template %s",
+                            cloned_tmpl_id_int,
+                        )
+            except Exception as tmpl_flag_err:
+                logger.warning(
+                    "Could not clear CLOUDVM_BASE from cloned template: %s",
+                    tmpl_flag_err,
+                )
+
             update_vm_status(vm_id, "PENDING", one_vm_id=one_vm_id)
             self._cache_vm_status(vm_id, "PENDING")
             await self._publish_status(nats_client, vm_id, "PENDING", {"oneVmId": one_vm_id})
 
-            asyncio.create_task(self._wait_for_ip_and_update(vm_id, one_vm_id, nats_client, ssh_username=vm_username))
+            asyncio.create_task(
+                self._wait_for_ip_and_update(
+                    vm_id,
+                    one_vm_id,
+                    nats_client,
+                    ssh_username=vm_username,
+                    disk_gb=disk_gb,
+                )
+            )
 
         except Exception as e:
             logger.error(f"Error creating VM {vm_id}: {e}", exc_info=True)
@@ -407,8 +490,107 @@ class VMHandler:
             return
 
         try:
+            image_id = None
+            cloned_template_id = None
+            try:
+                one_vm = cast(Any, await asyncio.to_thread(self.one.vm.info, one_vm_id))
+                template = getattr(one_vm, "TEMPLATE", None)
+                if template:
+                    try:
+                        template_id_raw = template.get("TEMPLATE_ID")
+                        if template_id_raw is not None:
+                            cloned_template_id = int(template_id_raw)
+                    except Exception as template_err:
+                        logger.warning(
+                            "Could not fetch VM %s template id before delete: %s",
+                            vm_id,
+                            template_err,
+                        )
+                    disk = template.get("DISK")
+                    if disk:
+                        if isinstance(disk, list):
+                            disk = disk[0]
+                        if isinstance(disk, dict):
+                            image_id_raw = disk.get("IMAGE_ID")
+                            if image_id_raw is not None:
+                                image_id = int(image_id_raw)
+            except Exception as info_err:
+                logger.warning("Could not fetch VM %s disk image before delete: %s", vm_id, info_err)
+
+            logger.info(
+                "VM %s cloned_template_id=%s image_id=%s",
+                vm_id,
+                cloned_template_id,
+                image_id,
+            )
+
             await asyncio.to_thread(self.one.vm.action, "terminate", one_vm_id)
             logger.info(f"Terminated ONE VM {one_vm_id}")
+
+            if image_id:
+                image_ready = False
+                image_deleted = False
+                for _ in range(30):
+                    try:
+                        image = cast(Any, await asyncio.to_thread(self.one.image.info, image_id))
+                        state = getattr(image, "STATE", None)
+                        if state == 1:
+                            image_ready = True
+                            break
+                        logger.info(
+                            "Waiting for image %s to be READY (state=%s) before delete",
+                            image_id,
+                            state,
+                        )
+                    except Exception as info_err:
+                        error_text = str(info_err).lower()
+                        if "error getting image" in error_text or "image not found" in error_text:
+                            logger.info(
+                                "Image %s already deleted or missing; treating as deleted",
+                                image_id,
+                            )
+                            image_ready = True
+                            image_deleted = True
+                            break
+                        logger.warning(
+                            "Image %s info failed while waiting for delete: %s",
+                            image_id,
+                            info_err,
+                        )
+                    await asyncio.sleep(2)
+
+                if image_ready:
+                    if image_deleted:
+                        logger.info("Image %s already deleted before delete call", image_id)
+                    else:
+                        try:
+                            await asyncio.to_thread(self.one.image.delete, image_id, True)
+                            logger.info("Deleted image %s for VM %s", image_id, vm_id)
+                            image_deleted = True
+                        except Exception as img_err:
+                            logger.warning("Failed to delete image %s for VM %s: %s", image_id, vm_id, img_err)
+                else:
+                    logger.warning(
+                        "Image %s still in use after waiting; skipping delete",
+                        image_id,
+                    )
+
+                if image_deleted and cloned_template_id is not None and cloned_template_id != 0:
+                    try:
+                        await asyncio.to_thread(self.one.template.delete, cloned_template_id, False)
+                        logger.info(
+                            "Deleted cloned template %s for VM %s",
+                            cloned_template_id,
+                            vm_id,
+                        )
+                    except Exception as template_err:
+                        logger.warning(
+                            "Failed to delete cloned template %s for VM %s: %s",
+                            cloned_template_id,
+                            vm_id,
+                            template_err,
+                        )
+
             delete_vm_record(vm_id)
             self._delete_vm_cache(vm_id)
             await self._publish_status(nats_client, vm_id, "DELETED", {
@@ -512,9 +694,13 @@ class VMHandler:
             await self.load_templates()
         if self._template_cache is None:
             return []
+        templates = [
+            t for t in self._template_cache.VMTEMPLATE
+            if _is_cloudvm_base_template(t)
+        ]
         return [
             {"id": t.ID, "name": t.NAME}
-            for t in self._template_cache.VMTEMPLATE
+            for t in templates
         ]
 
     # ------------------------------------------------------------------
@@ -546,6 +732,7 @@ class VMHandler:
         one_vm_id: int,
         nats_client,
         ssh_username: str = None,
+        disk_gb: int | None = None,
         poll_interval: int = 8,
         timeout: int = 300,
     ) -> None:
@@ -585,6 +772,30 @@ class VMHandler:
                     original_ip = self._extract_ip(vm)
                     if original_ip:
                         ip = self._apply_ip_offset(original_ip, ONE_IP_OFFSET)
+                        # Resize disk to requested size after VM is running (persistent images only)
+                        if disk_gb and disk_gb > 0:
+                            try:
+                                await asyncio.to_thread(
+                                    self.one.vm.diskresize,
+                                    one_vm_id,
+                                    0,
+                                    str(disk_gb * 1024),
+                                )
+                                logger.info("VM %s disk resized to %dGB", one_vm_id, disk_gb)
+                                try:
+                                    await asyncio.to_thread(self.one.vm.action, "reboot", one_vm_id)
+                                    logger.info(
+                                        "VM %s reboot requested to apply disk resize",
+                                        one_vm_id,
+                                    )
+                                except Exception as reboot_err:
+                                    logger.warning(
+                                        "VM %s reboot after resize failed (non-fatal): %s",
+                                        one_vm_id,
+                                        reboot_err,
+                                    )
+                            except Exception as resize_err:
+                                logger.warning("VM %s disk resize failed (non-fatal): %s", one_vm_id, resize_err)
                         update_vm_status(
                             vm_id,
                             "RUNNING",
@@ -690,7 +901,10 @@ class VMHandler:
             await self.load_templates()
         if self._template_cache is None:
             return None
-        templates = self._template_cache.VMTEMPLATE
+        templates = [
+            t for t in self._template_cache.VMTEMPLATE
+            if _is_cloudvm_base_template(t)
+        ]
 
         def normalize(s: str) -> str:
             s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()

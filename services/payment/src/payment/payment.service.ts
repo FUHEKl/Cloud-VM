@@ -3,6 +3,8 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  OnModuleInit,
+  NotFoundException,
 } from "@nestjs/common";
 import Stripe from "stripe";
 import { PrismaService } from "../prisma/prisma.service";
@@ -58,6 +60,19 @@ const PLAN_LABELS: Record<PlanId, string> = {
   enterprise: "Enterprise",
 };
 
+const REQUIRED_PLAN_IDS: PlanId[] = ["student", "pro", "enterprise"];
+
+type PlanConfigRow = {
+  planId: PlanId;
+  amountDt: number;
+  rank: number;
+  vmHoursMonthly: number;
+  maxVms: number;
+  maxCpu: number;
+  maxRamMb: number;
+  maxDiskGb: number;
+};
+
 function loadManagedPlanCatalogFromEnv(): Record<PlanId, ManagedPlanConfig> {
   const raw = process.env.PLAN_CATALOG_JSON;
   if (!raw) {
@@ -101,32 +116,10 @@ function loadManagedPlanCatalogFromEnv(): Record<PlanId, ManagedPlanConfig> {
   };
 }
 
-const MANAGED_PLAN_CATALOG = loadManagedPlanCatalogFromEnv();
-
-const PLAN_CATALOG: Record<PlanId, PaymentPlanConfig> = {
-  student: {
-    ...MANAGED_PLAN_CATALOG.student,
-    name: `${PLAN_LABELS.student} Plan`,
-    amountMilli: Math.round(MANAGED_PLAN_CATALOG.student.amountDt * 1000),
-    description: `Up to ${MANAGED_PLAN_CATALOG.student.quota.maxVms} VMs · ${MANAGED_PLAN_CATALOG.student.vmHoursMonthly} VM hours/month · ${MANAGED_PLAN_CATALOG.student.quota.maxCpu} vCPU / ${Math.round(MANAGED_PLAN_CATALOG.student.quota.maxRamMb / 1024)} GB / ${MANAGED_PLAN_CATALOG.student.quota.maxDiskGb} GB`,
-  },
-  pro: {
-    ...MANAGED_PLAN_CATALOG.pro,
-    name: `${PLAN_LABELS.pro} Plan`,
-    amountMilli: Math.round(MANAGED_PLAN_CATALOG.pro.amountDt * 1000),
-    description: `Up to ${MANAGED_PLAN_CATALOG.pro.quota.maxVms} VMs · ${MANAGED_PLAN_CATALOG.pro.vmHoursMonthly} VM hours/month · ${MANAGED_PLAN_CATALOG.pro.quota.maxCpu} vCPU / ${Math.round(MANAGED_PLAN_CATALOG.pro.quota.maxRamMb / 1024)} GB / ${MANAGED_PLAN_CATALOG.pro.quota.maxDiskGb} GB`,
-  },
-  enterprise: {
-    ...MANAGED_PLAN_CATALOG.enterprise,
-    name: `${PLAN_LABELS.enterprise} Plan`,
-    amountMilli: Math.round(MANAGED_PLAN_CATALOG.enterprise.amountDt * 1000),
-    description: `Up to ${MANAGED_PLAN_CATALOG.enterprise.quota.maxVms} VMs · ${MANAGED_PLAN_CATALOG.enterprise.vmHoursMonthly} VM hours/month · ${MANAGED_PLAN_CATALOG.enterprise.quota.maxCpu} vCPU / ${Math.round(MANAGED_PLAN_CATALOG.enterprise.quota.maxRamMb / 1024)} GB / ${MANAGED_PLAN_CATALOG.enterprise.quota.maxDiskGb} GB`,
-  },
-};
-
 @Injectable()
-export class PaymentService {
+export class PaymentService implements OnModuleInit {
   private readonly stripe: Stripe | null;
+  private planCatalog: Record<PlanId, PaymentPlanConfig> | null = null;
 
   constructor(private readonly prisma: PrismaService) {
     const key = process.env.STRIPE_SECRET_KEY;
@@ -135,6 +128,195 @@ export class PaymentService {
           apiVersion: "2024-06-20",
         })
       : null;
+  }
+
+  async onModuleInit() {
+    this.planCatalog = await this.loadPlanCatalog();
+  }
+
+  private assertAdminRole(actorRole?: string) {
+    if (actorRole !== "ADMIN") {
+      throw new ForbiddenException("Admin role required");
+    }
+  }
+
+  private assertPlanId(planId: string): PlanId {
+    if (planId === "student" || planId === "pro" || planId === "enterprise") {
+      return planId;
+    }
+    throw new BadRequestException("Invalid plan id");
+  }
+
+  private buildPaymentPlanConfig(planId: PlanId, raw: PlanConfigRow): PaymentPlanConfig {
+    return {
+      amountDt: raw.amountDt,
+      rank: raw.rank,
+      vmHoursMonthly: raw.vmHoursMonthly,
+      quota: {
+        maxVms: raw.maxVms,
+        maxCpu: raw.maxCpu,
+        maxRamMb: raw.maxRamMb,
+        maxDiskGb: raw.maxDiskGb,
+      },
+      name: `${PLAN_LABELS[planId]} Plan`,
+      amountMilli: Math.round(raw.amountDt * 1000),
+      description: `Up to ${raw.maxVms} VMs · ${raw.vmHoursMonthly} VM hours/month · ${raw.maxCpu} vCPU / ${Math.round(raw.maxRamMb / 1024)} GB / ${raw.maxDiskGb} GB`,
+    };
+  }
+
+  private toPublicPlan(planId: PlanId, raw: PlanConfigRow): PublicPlan {
+    return {
+      id: planId,
+      name: PLAN_LABELS[planId],
+      amountDt: raw.amountDt,
+      rank: raw.rank,
+      vmHoursMonthly: raw.vmHoursMonthly,
+      quota: {
+        maxVms: raw.maxVms,
+        maxCpu: raw.maxCpu,
+        maxRamMb: raw.maxRamMb,
+        maxDiskGb: raw.maxDiskGb,
+      },
+      features: [
+        `${raw.maxVms} VMs`,
+        `${raw.vmHoursMonthly} VM hours/month`,
+        `${raw.maxCpu} vCPU · ${Math.round(raw.maxRamMb / 1024)} GB RAM · ${raw.maxDiskGb} GB disk`,
+      ],
+    };
+  }
+
+  private buildPlanCatalogFromRows(rows: PlanConfigRow[]): Record<PlanId, PaymentPlanConfig> {
+    const byId = new Map(rows.map((row) => [row.planId, row] as const));
+    const missing = REQUIRED_PLAN_IDS.filter((planId) => !byId.has(planId));
+    if (missing.length > 0) {
+      throw new InternalServerErrorException(
+        `Missing plan configs for: ${missing.join(", ")}`,
+      );
+    }
+
+    return REQUIRED_PLAN_IDS.reduce((acc, planId) => {
+      const row = byId.get(planId)!;
+      acc[planId] = this.buildPaymentPlanConfig(planId, row);
+      return acc;
+    }, {} as Record<PlanId, PaymentPlanConfig>);
+  }
+
+  private isMissingPlanConfigTableError(error: unknown): boolean {
+    return Boolean(
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "P2021",
+    );
+  }
+
+  private async ensurePlanConfigTable() {
+    await this.prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "plan_configs" (
+        "id" TEXT NOT NULL,
+        "planId" TEXT NOT NULL,
+        "amountDt" DOUBLE PRECISION NOT NULL,
+        "rank" INTEGER NOT NULL,
+        "vmHoursMonthly" INTEGER NOT NULL,
+        "maxVms" INTEGER NOT NULL,
+        "maxCpu" INTEGER NOT NULL,
+        "maxRamMb" INTEGER NOT NULL,
+        "maxDiskGb" INTEGER NOT NULL,
+        "updatedAt" TIMESTAMP(3) NOT NULL,
+        CONSTRAINT "plan_configs_pkey" PRIMARY KEY ("id")
+      );
+    `);
+
+    await this.prisma.$executeRawUnsafe(
+      "CREATE UNIQUE INDEX IF NOT EXISTS \"plan_configs_planId_key\" ON \"plan_configs\"(\"planId\");",
+    );
+  }
+
+  private async loadPlanCatalog(): Promise<Record<PlanId, PaymentPlanConfig>> {
+    let rows: PlanConfigRow[] = [];
+    try {
+      rows = await this.prisma.planConfig.findMany({
+        select: {
+          planId: true,
+          amountDt: true,
+          rank: true,
+          vmHoursMonthly: true,
+          maxVms: true,
+          maxCpu: true,
+          maxRamMb: true,
+          maxDiskGb: true,
+        },
+        orderBy: { rank: "asc" },
+      }) as PlanConfigRow[];
+    } catch (error) {
+      if (!this.isMissingPlanConfigTableError(error)) {
+        throw error;
+      }
+      await this.ensurePlanConfigTable();
+      rows = await this.prisma.planConfig.findMany({
+        select: {
+          planId: true,
+          amountDt: true,
+          rank: true,
+          vmHoursMonthly: true,
+          maxVms: true,
+          maxCpu: true,
+          maxRamMb: true,
+          maxDiskGb: true,
+        },
+        orderBy: { rank: "asc" },
+      }) as PlanConfigRow[];
+    }
+
+    if (rows.length > 0) {
+      return this.buildPlanCatalogFromRows(rows as PlanConfigRow[]);
+    }
+
+    const seed = loadManagedPlanCatalogFromEnv();
+    await this.prisma.planConfig.createMany({
+      data: REQUIRED_PLAN_IDS.map((planId) => ({
+        planId,
+        amountDt: seed[planId].amountDt,
+        rank: seed[planId].rank,
+        vmHoursMonthly: seed[planId].vmHoursMonthly,
+        maxVms: seed[planId].quota.maxVms,
+        maxCpu: seed[planId].quota.maxCpu,
+        maxRamMb: seed[planId].quota.maxRamMb,
+        maxDiskGb: seed[planId].quota.maxDiskGb,
+      })),
+      skipDuplicates: true,
+    });
+
+    const seededRows = await this.prisma.planConfig.findMany({
+      select: {
+        planId: true,
+        amountDt: true,
+        rank: true,
+        vmHoursMonthly: true,
+        maxVms: true,
+        maxCpu: true,
+        maxRamMb: true,
+        maxDiskGb: true,
+      },
+      orderBy: { rank: "asc" },
+    });
+
+    if (seededRows.length === 0) {
+      throw new InternalServerErrorException("Plan catalog seed failed");
+    }
+
+    return this.buildPlanCatalogFromRows(seededRows as PlanConfigRow[]);
+  }
+
+  private async getPlanCatalog(): Promise<Record<PlanId, PaymentPlanConfig>> {
+    if (!this.planCatalog) {
+      this.planCatalog = await this.loadPlanCatalog();
+    }
+    return this.planCatalog;
+  }
+
+  private async refreshPlanCatalog() {
+    this.planCatalog = await this.loadPlanCatalog();
   }
 
   private getPublicOrigin(): string {
@@ -250,10 +432,13 @@ export class PaymentService {
     return null;
   }
 
-  private getPlanRank(planId: AnyPlanId | null): number {
+  private getPlanRank(
+    planId: AnyPlanId | null,
+    catalog: Record<PlanId, PaymentPlanConfig>,
+  ): number {
     if (!planId) return 0;
     if (planId === "unlimited") return 99;
-    return PLAN_CATALOG[planId].rank;
+    return catalog[planId].rank;
   }
 
   private getBillingCycleEnd(startedAt: Date): Date {
@@ -297,7 +482,11 @@ export class PaymentService {
     return response.json() as Promise<{ verified: boolean }>;
   }
 
-  private async enforcePlanPurchaseRules(userId: string, requestedPlanId: PlanId) {
+  private async enforcePlanPurchaseRules(
+    userId: string,
+    requestedPlanId: PlanId,
+    catalog: Record<PlanId, PaymentPlanConfig>,
+  ) {
     const snapshot = await this.getSubscriptionAccessSnapshot(userId);
 
     const currentPlanId = snapshot.activePlanId;
@@ -306,8 +495,8 @@ export class PaymentService {
       throw new ForbiddenException("Admin/unlimited accounts cannot purchase paid plans");
     }
 
-    const currentRank = this.getPlanRank(currentPlanId);
-    const requestedRank = this.getPlanRank(requestedPlanId);
+    const currentRank = this.getPlanRank(currentPlanId, catalog);
+    const requestedRank = this.getPlanRank(requestedPlanId, catalog);
 
     if (requestedRank > currentRank) return;
 
@@ -374,7 +563,8 @@ export class PaymentService {
       throw new ForbiddenException("Admin accounts have unlimited access and cannot purchase plans");
     }
 
-    const plan = PLAN_CATALOG[planId];
+    const planCatalog = await this.getPlanCatalog();
+    const plan = planCatalog[planId];
     if (!plan) {
       throw new BadRequestException("Invalid plan id");
     }
@@ -386,17 +576,17 @@ export class PaymentService {
       }
     }
 
-    await this.enforcePlanPurchaseRules(userId, planId);
+    await this.enforcePlanPurchaseRules(userId, planId, planCatalog);
 
     const snapshot = await this.getSubscriptionAccessSnapshot(userId);
     const rawPlanId = snapshot.activePlanId;
     const currentPlanId = rawPlanId === "unlimited" ? null : rawPlanId;
-    const requestedRank = this.getPlanRank(planId);
-    const currentRank = this.getPlanRank(currentPlanId);
+    const requestedRank = this.getPlanRank(planId, planCatalog);
+    const currentRank = this.getPlanRank(currentPlanId, planCatalog);
     const isUpgrade = Boolean(currentPlanId) && requestedRank > currentRank;
 
     const currentPlanAmount = isUpgrade && currentPlanId
-      ? PLAN_CATALOG[currentPlanId].amountDt
+      ? planCatalog[currentPlanId].amountDt
       : 0;
     const chargeDt = isUpgrade
       ? Math.max(0, Number((plan.amountDt - currentPlanAmount).toFixed(2)))
@@ -474,10 +664,11 @@ export class PaymentService {
     });
   }
 
-  getPublicPlans(): PublicPlan[] {
-    return (Object.keys(PLAN_CATALOG) as PlanId[])
+  async getPublicPlans(): Promise<PublicPlan[]> {
+    const planCatalog = await this.getPlanCatalog();
+    return (Object.keys(planCatalog) as PlanId[])
       .map((planId) => {
-        const plan = PLAN_CATALOG[planId];
+        const plan = planCatalog[planId];
         return {
           id: planId,
           name: PLAN_LABELS[planId],
@@ -493,6 +684,78 @@ export class PaymentService {
         };
       })
       .sort((a, b) => a.rank - b.rank);
+  }
+
+  async adminGetAllPlans(actorRole?: string) {
+    this.assertAdminRole(actorRole);
+    await this.getPlanCatalog();
+    const rows = await this.prisma.planConfig.findMany({
+      select: {
+        planId: true,
+        amountDt: true,
+        rank: true,
+        vmHoursMonthly: true,
+        maxVms: true,
+        maxCpu: true,
+        maxRamMb: true,
+        maxDiskGb: true,
+      },
+      orderBy: { rank: "asc" },
+    });
+
+    return rows
+      .filter((row) => REQUIRED_PLAN_IDS.includes(row.planId as PlanId))
+      .map((row) => this.toPublicPlan(row.planId as PlanId, row as PlanConfigRow));
+  }
+
+  async adminUpdatePlan(
+    actorRole: string | undefined,
+    planId: string,
+    payload: Partial<PlanConfigRow>,
+  ) {
+    this.assertAdminRole(actorRole);
+    const normalizedId = this.assertPlanId(planId);
+
+    const existing = await this.prisma.planConfig.findUnique({
+      where: { planId: normalizedId },
+      select: {
+        planId: true,
+        amountDt: true,
+        rank: true,
+        vmHoursMonthly: true,
+        maxVms: true,
+        maxCpu: true,
+        maxRamMb: true,
+        maxDiskGb: true,
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException("Plan config not found");
+    }
+
+    if (!payload || Object.keys(payload).length === 0) {
+      return existing;
+    }
+
+    const updated = await this.prisma.planConfig.update({
+      where: { planId: normalizedId },
+      data: payload,
+      select: {
+        planId: true,
+        amountDt: true,
+        rank: true,
+        vmHoursMonthly: true,
+        maxVms: true,
+        maxCpu: true,
+        maxRamMb: true,
+        maxDiskGb: true,
+      },
+    });
+
+    await this.refreshPlanCatalog();
+
+    return updated;
   }
 
   async confirmCheckoutSession(userId: string, sessionId: string) {

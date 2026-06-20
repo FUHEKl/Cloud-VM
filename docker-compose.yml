@@ -174,7 +174,6 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
       - SMTP_FROM=${SMTP_FROM}
-      - STUDENT_EMAIL_DOMAINS=${STUDENT_EMAIL_DOMAINS}
     depends_on:
       postgres:
         condition: service_healthy

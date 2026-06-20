@@ -70,6 +70,9 @@ def update_vm_status(
         set_clauses.append('"sshUsername" = %s')
         params.append(ssh_username)
 
+    if status == "STOPPED":
+        set_clauses.append('"stoppedAt" = COALESCE("stoppedAt", NOW())')
+
     params.append(vm_id)
 
     query = f"""
@@ -128,13 +131,18 @@ def get_user_ssh_keys(user_id: str) -> list:
 
 
 def delete_vm_record(vm_id: str) -> None:
-    """Hard delete a VM row from virtual_machines."""
+    """Soft delete a VM row from virtual_machines."""
     try:
         with _connection_cursor() as (conn, cur):
-            cur.execute('DELETE FROM virtual_machines WHERE id = %s', (vm_id,))
-        logger.info(f"Deleted VM {vm_id} from database")
+            cur.execute(
+                'UPDATE virtual_machines '
+                'SET status = %s, "stoppedAt" = COALESCE("stoppedAt", NOW()), "updatedAt" = NOW() '
+                'WHERE id = %s',
+                ("DELETED", vm_id),
+            )
+        logger.info(f"Soft-deleted VM {vm_id} in database")
     except Exception as e:
-        logger.error(f"Error deleting VM {vm_id} from database: {e}", exc_info=True)
+        logger.error(f"Error soft-deleting VM {vm_id} in database: {e}", exc_info=True)
         raise
 
 

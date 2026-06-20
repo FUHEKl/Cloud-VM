@@ -5,50 +5,9 @@ import { useSearchParams } from "next/navigation";
 import api from "@/lib/api";
 import { getErrorMessage } from "@/lib/error";
 import { useAuth } from "@/lib/auth";
-import type { SubscriptionPlanId, UserProfileDetails } from "@/types";
+import type { PublicPlanCatalogItem, SubscriptionPlanId, UserProfileDetails } from "@/types";
 
 type PlanId = "student" | "pro" | "enterprise";
-
-const fallbackPlans: Array<{
-  id: PlanId;
-  name: string;
-  dt: number;
-  features: string[];
-}> = [
-  {
-    id: "student",
-    name: "Student",
-    dt: 29,
-    features: ["2 VMs", "60 VM hours/month", "2 vCPU · 4 GB RAM · 40 GB disk"],
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    dt: 79,
-    features: ["6 VMs", "220 VM hours/month", "4 vCPU · 8 GB RAM · 120 GB disk"],
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    dt: 199,
-    features: ["20 VMs", "900 VM hours/month", "8 vCPU · 16 GB RAM · 400 GB disk"],
-  },
-];
-
-interface PublicPlanCatalogItem {
-  id: PlanId;
-  name: string;
-  amountDt: number;
-  rank: number;
-  vmHoursMonthly: number;
-  quota: {
-    maxVms: number;
-    maxCpu: number;
-    maxRamMb: number;
-    maxDiskGb: number;
-  };
-  features: string[];
-}
 
 interface PaymentRecord {
   id: string;
@@ -75,22 +34,7 @@ export default function BillingPage() {
   const [studentCode, setStudentCode] = useState("");
   const [studentMessage, setStudentMessage] = useState("");
   const [studentBusy, setStudentBusy] = useState(false);
-  const [plans, setPlans] = useState<PublicPlanCatalogItem[]>(
-    fallbackPlans.map((plan, index) => ({
-      id: plan.id,
-      name: plan.name,
-      amountDt: plan.dt,
-      rank: index + 1,
-      vmHoursMonthly: plan.id === "student" ? 60 : plan.id === "pro" ? 220 : 900,
-      quota:
-        plan.id === "student"
-          ? { maxVms: 2, maxCpu: 2, maxRamMb: 4096, maxDiskGb: 40 }
-          : plan.id === "pro"
-            ? { maxVms: 6, maxCpu: 8, maxRamMb: 16384, maxDiskGb: 120 }
-            : { maxVms: 20, maxCpu: 32, maxRamMb: 65536, maxDiskGb: 400 },
-      features: plan.features,
-    })),
-  );
+  const [plans, setPlans] = useState<PublicPlanCatalogItem[]>([]);
 
   const orderedPlans = useMemo(() => {
     if (!preferredPlan) return plans;
@@ -106,7 +50,7 @@ export default function BillingPage() {
         setPlans(data);
       }
     } catch {
-      // keep local fallback plans
+      setPlans([]);
     }
   }, []);
 
@@ -159,7 +103,9 @@ export default function BillingPage() {
     unlimited: 99,
   };
 
-  const activePlan = profileDetails?.subscription?.planId;
+  const activePlan = profileDetails?.subscription?.planId
+    ? (profileDetails.subscription.planId.trim().toLowerCase() as SubscriptionPlanId)
+    : undefined;
   const canRenewSamePlan = profileDetails?.subscription?.canRenewSamePlan ?? true;
   const vmUsagePercent = profileDetails?.subscription
     ? Math.min(
@@ -169,6 +115,7 @@ export default function BillingPage() {
           : 0,
       )
     : 0;
+  const plansLoading = plans.length === 0;
 
   const isPlanSelectable = (planId: PlanId) => {
     if (!activePlan || activePlan === "unlimited") return true;
@@ -178,6 +125,44 @@ export default function BillingPage() {
 
     if (requestedRank > currentRank) return true;
     return canRenewSamePlan;
+  };
+
+  const formatDt = (amount: number) =>
+    new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(amount);
+
+  const getDisplayedPlanAmount = (plan: PublicPlanCatalogItem) => {
+    if (!activePlan || activePlan === "unlimited") return plan.amountDt;
+
+    const currentPlan = plans.find((p) => p.id === activePlan);
+    if (!currentPlan) return plan.amountDt;
+
+    const requestedRank = planRank[plan.id];
+    const currentRank = planRank[activePlan];
+
+    if (requestedRank > currentRank) {
+      return Math.max(0, Number((plan.amountDt - currentPlan.amountDt).toFixed(2)));
+    }
+
+    return plan.amountDt;
+  };
+
+  const isUpgradePlan = (planId: PlanId) => {
+    if (!activePlan || activePlan === "unlimited") return false;
+    return planRank[planId] > planRank[activePlan];
+  };
+
+  const formatDecimalHours = (hours: number, alwaysHours = false) => {
+    if (alwaysHours) return `${Math.round(hours)} h`;
+    if (!Number.isFinite(hours) || hours <= 0) return `0 min`;
+    const totalMinutes = Math.round(hours * 60);
+    if (totalMinutes < 60) return `${totalMinutes} min`;
+    const hh = Math.floor(totalMinutes / 60);
+    const mm = totalMinutes % 60;
+    const mmStr = mm.toString().padStart(2, "0");
+    return `${hh} h ${mmStr} min`;
   };
 
   const planBlockReason = (planId: PlanId) => {
@@ -335,8 +320,8 @@ export default function BillingPage() {
       {profileDetails?.subscription && !isAdmin && (
         <div className="px-4 py-3 rounded-lg bg-cyber-cyan/10 border border-cyber-cyan/30 text-cyber-text text-sm">
           <span className="font-medium text-cyber-cyan uppercase">{profileDetails.subscription.planId}</span>
-          {" "}plan · VM hours used: {profileDetails.subscription.vmHoursUsed.toFixed(2)} / {profileDetails.subscription.vmHoursIncluded}
-          {" "}· Remaining: {profileDetails.subscription.vmHoursRemaining.toFixed(2)}
+          {" "}plan · VM hours used: {formatDecimalHours(profileDetails.subscription.vmHoursUsed)} / {formatDecimalHours(profileDetails.subscription.vmHoursIncluded, true)}
+          {" "}· Remaining: {formatDecimalHours(profileDetails.subscription.vmHoursRemaining)}
           {" "}· Cycle ends: {new Date(profileDetails.subscription.cycleEndsAt).toLocaleDateString()}
           <div className="w-full bg-cyber-border rounded h-2 mt-2">
             <div
@@ -354,76 +339,113 @@ export default function BillingPage() {
       )}
 
       {!isAdmin && (
-        <div className="grid md:grid-cols-3 gap-4">
-          {orderedPlans.map((plan) => (
-            <div key={plan.id} className="cyber-card">
-              <h3 className="text-lg font-semibold text-cyber-text mb-1">{plan.name}</h3>
-              <p className="text-3xl font-bold text-cyber-green mb-4">{plan.amountDt} DT<span className="text-sm text-cyber-text-dim"> / month</span></p>
-              <ul className="space-y-2 mb-5 text-sm text-cyber-text-dim">
-                {plan.features.map((f) => (
-                  <li key={f}>• {f}</li>
-                ))}
-              </ul>
-              <button
-                onClick={() => startCheckout(plan.id)}
-                disabled={
-                  loadingPlan !== null ||
-                  !isPlanSelectable(plan.id) ||
-                  (plan.id === "student" && !profileDetails?.studentEmailVerified)
-                }
-                className="cyber-btn-primary w-full disabled:opacity-50"
-              >
-                {loadingPlan === plan.id ? "Opening Stripe..." : `Pay ${plan.amountDt} DT`}
-              </button>
-              {plan.id === "student" && !profileDetails?.studentEmailVerified && (
-                <div className="mt-3 space-y-2">
-                  <p className="text-xs text-cyber-orange">
-                    Verify your student email to unlock this plan.
-                  </p>
+        plansLoading ? (
+          <div className="grid md:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="cyber-card h-64 animate-pulse bg-cyber-border/20" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid md:grid-cols-3 gap-4">
+            {orderedPlans.map((plan) => {
+              const displayedAmount = getDisplayedPlanAmount(plan);
+              const upgrade = isUpgradePlan(plan.id);
+              const showUpgradePrice = upgrade && displayedAmount < plan.amountDt;
+
+              return (
+                <div key={plan.id} className="cyber-card">
+                  <h3 className="text-lg font-semibold text-cyber-text mb-1">{plan.name}</h3>
+                  {showUpgradePrice ? (
+                    <>
+                      <p className="text-3xl font-bold text-cyber-green mb-2">
+                        Upgrade {formatDt(displayedAmount)} DT
+                      </p>
+                      <p className="text-xs text-cyber-text-dim mb-3">
+                        Full price: {formatDt(plan.amountDt)} DT / month
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-3xl font-bold text-cyber-green mb-4">
+                      {formatDt(plan.amountDt)} DT
+                      <span className="text-sm text-cyber-text-dim"> / month</span>
+                    </p>
+                  )}
+                  <ul className="space-y-2 mb-5 text-sm text-cyber-text-dim">
+                    {plan.features.map((f) => (
+                      <li key={f}>• {f}</li>
+                    ))}
+                  </ul>
+                  {upgrade && (
+                    <p className="text-xs text-cyber-cyan mb-3">
+                      Upgrade price: {formatDt(displayedAmount)} DT (credit applied)
+                    </p>
+                  )}
                   <button
-                    type="button"
-                    onClick={sendStudentCode}
-                    disabled={studentBusy}
-                    className="cyber-btn-secondary w-full !py-1.5 text-sm disabled:opacity-50"
+                    onClick={() => startCheckout(plan.id)}
+                    disabled={
+                      loadingPlan !== null ||
+                      !isPlanSelectable(plan.id) ||
+                      (plan.id === "student" && !profileDetails?.studentEmailVerified)
+                    }
+                    className="cyber-btn-primary w-full disabled:opacity-50"
                   >
-                    {studentBusy ? "Sending..." : "Send verification code"}
+                    {loadingPlan === plan.id
+                      ? "Opening Stripe..."
+                      : upgrade
+                        ? `Upgrade for ${formatDt(displayedAmount)} DT`
+                        : `Pay ${formatDt(displayedAmount)} DT`}
                   </button>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={studentCode}
-                      onChange={(e) => setStudentCode(e.target.value)}
-                      placeholder="Enter 6-digit code"
-                      maxLength={6}
-                      className="flex-1 bg-cyber-bg border border-cyber-border rounded px-3 py-1.5 text-sm text-cyber-text focus:outline-none focus:border-cyber-cyan"
-                    />
-                    <button
-                      type="button"
-                      onClick={confirmStudentCode}
-                      disabled={studentBusy || !studentCode.trim()}
-                      className="cyber-btn-primary !py-1.5 text-sm disabled:opacity-50"
-                    >
-                      Verify
-                    </button>
-                  </div>
-                  {studentMessage && (
-                    <p className={`text-xs mt-1 ${studentMessage.startsWith("✓") ? "text-cyber-green" : "text-cyber-orange"}`}>
-                      {studentMessage}
+                  {plan.id === "student" && !profileDetails?.studentEmailVerified && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-cyber-orange">
+                        Verify your student email to unlock this plan.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={sendStudentCode}
+                        disabled={studentBusy}
+                        className="cyber-btn-secondary w-full !py-1.5 text-sm disabled:opacity-50"
+                      >
+                        {studentBusy ? "Sending..." : "Send verification code"}
+                      </button>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={studentCode}
+                          onChange={(e) => setStudentCode(e.target.value)}
+                          placeholder="Enter 6-digit code"
+                          maxLength={6}
+                          className="flex-1 bg-cyber-bg border border-cyber-border rounded px-3 py-1.5 text-sm text-cyber-text focus:outline-none focus:border-cyber-cyan"
+                        />
+                        <button
+                          type="button"
+                          onClick={confirmStudentCode}
+                          disabled={studentBusy || !studentCode.trim()}
+                          className="cyber-btn-primary !py-1.5 text-sm disabled:opacity-50"
+                        >
+                          Verify
+                        </button>
+                      </div>
+                      {studentMessage && (
+                        <p className={`text-xs mt-1 ${studentMessage.startsWith("✓") ? "text-cyber-green" : "text-cyber-orange"}`}>
+                          {studentMessage}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {plan.id === "student" && profileDetails?.studentEmailVerified && (
+                    <p className="text-xs text-cyber-green mt-2">✓ Student email verified</p>
+                  )}
+                  {!isPlanSelectable(plan.id) && (
+                    <p className="text-xs text-cyber-orange mt-2">
+                      {planBlockReason(plan.id)}
                     </p>
                   )}
                 </div>
-              )}
-              {plan.id === "student" && profileDetails?.studentEmailVerified && (
-                <p className="text-xs text-cyber-green mt-2">✓ Student email verified</p>
-              )}
-              {!isPlanSelectable(plan.id) && (
-                <p className="text-xs text-cyber-orange mt-2">
-                  {planBlockReason(plan.id)}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
+              );
+            })}
+          </div>
+        )
       )}
 
       <div className="cyber-card">

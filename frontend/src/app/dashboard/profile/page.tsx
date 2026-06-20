@@ -184,15 +184,8 @@ export default function ProfilePage() {
         </form>
       </div>
 
-      <div className="mt-6">
-        <MfaSettingsPanel
-          title="Security & MFA"
-          description="Enable MFA for your account and manage recovery codes from one place."
-        />
-      </div>
-
       {/* Password Form */}
-      <div className="cyber-card">
+      <div className="cyber-card mb-6">
         <h2 className="text-lg font-semibold text-cyber-text mb-4">
           Change Password
         </h2>
@@ -266,6 +259,13 @@ export default function ProfilePage() {
             {changingPw ? "Changing..." : "Change Password"}
           </button>
         </form>
+      </div>
+
+      <div className="mt-6">
+        <MfaSettingsPanel
+          title="Security & MFA"
+          description="Enable MFA for your account and manage recovery codes from one place."
+        />
       </div>
 
       {profileDetails?.usage && profileDetails?.subscription && (

@@ -20,6 +20,8 @@ import { ChangePasswordDto } from "./dto/change-password.dto";
 import { AdminUpdateUserDto } from "./dto/admin-update-user.dto";
 import { AdminSetSubscriptionDto } from "./dto/admin-set-subscription.dto";
 import { ConfirmStudentVerificationDto } from "./dto/confirm-student-verification.dto";
+import { CreateUniversityDto } from "./dto/create-university.dto";
+import { UpdateUniversityDto } from "./dto/update-university.dto";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { Roles } from "../common/decorators/roles.decorator";
@@ -155,6 +157,53 @@ export class UserController {
       limit ? parseInt(limit, 10) : 20,
       search,
     );
+  }
+
+  @Get("admin/universities")
+  @UseGuards(RolesGuard)
+  @Roles("ADMIN")
+  listUniversities(@CurrentUser() user: { userId: string; role: string }) {
+    this.assertAdmin(user);
+    return this.userService.listUniversities(user.userId);
+  }
+
+  @Post("admin/universities")
+  @UseGuards(RolesGuard)
+  @Roles("ADMIN")
+  createUniversity(
+    @CurrentUser() user: { userId: string; role: string },
+    @Body() dto: CreateUniversityDto,
+  ) {
+    this.assertAdmin(user);
+    return this.userService.createUniversity(dto, user.userId);
+  }
+
+  @Patch("admin/universities/:id")
+  @UseGuards(RolesGuard)
+  @Roles("ADMIN")
+  updateUniversity(
+    @CurrentUser() user: { userId: string; role: string },
+    @Param("id") id: string,
+    @Body() dto: UpdateUniversityDto,
+  ) {
+    this.assertAdmin(user);
+    return this.userService.updateUniversity(id, dto, user.userId);
+  }
+
+  @Delete("admin/universities/:id")
+  @UseGuards(RolesGuard)
+  @Roles("ADMIN")
+  deleteUniversity(@CurrentUser() user: { userId: string; role: string }, @Param("id") id: string) {
+    this.assertAdmin(user);
+    return this.userService.deleteUniversity(id, user.userId);
+  }
+
+  @Patch("admin/universities/:id/toggle")
+  @UseGuards(RolesGuard)
+  @Roles("ADMIN")
+  toggleUniversityActive(@CurrentUser() user: { userId: string; role: string }, @Param("id") id: string) {
+    this.assertAdmin(user);
+    return this.userService.toggleUniversityActive(id, user.userId);
   }
 
   @Get(":id")

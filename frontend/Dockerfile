@@ -5,7 +5,7 @@ ARG NEXT_PUBLIC_VM_WS_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_VM_WS_URL=${NEXT_PUBLIC_VM_WS_URL}
 COPY package*.json ./
-RUN npm install --include=optional
+RUN npm ci --include=optional
 COPY . .
 RUN npm run build
 
@@ -17,4 +17,5 @@ COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app/package.json ./
 COPY --from=base /app/public ./public
 EXPOSE 3000
+USER node
 CMD ["npm", "start"]
